@@ -1,0 +1,404 @@
+
+import groovy.json.JsonOutput
+import java.security.MessageDigest
+import java.net.URLEncoder
+
+definition(
+    name: "IEC Okta Authentication",
+    namespace: "amithalp",
+    author: "Amit Halperin",
+    description: "Authenticate with IEC Okta",
+    category: "My Apps",
+    iconUrl: "https://example.com/icon.png",
+    iconX2Url: "https://example.com/icon@2x.png"
+)
+
+preferences {
+    page(name: "mainPage", title: "IEC Okta Authentication", content: "mainPage", install: true, uninstall: true)
+    page(name: "initiateAuthPage", title: "Initiate Authentication", content: "initiateAuthPage", install: false, uninstall: false)
+    page(name: "verifyOtpPage", title: "Verify OTP Code", content: "verifyOtpPage", install: false, uninstall: false)
+    page(name: "authorizeSessionPage", title: "Authorize Session", content: "authorizeSessionPage", install: false, uninstall: false)
+    page(name: "getAccessTokenPage", title: "Get Access Token", content: "getAccessTokenPage", install: false, uninstall: false)
+}
+
+mappings {
+    path("/oauth/callback") { action: [GET: "oauthCallback"] }
+}
+
+def mainPage() {
+    dynamicPage(name: "mainPage", title: "IEC Okta Authentication", install: true, uninstall: true) {
+        section("Step 1: Enter User ID and Initiate Authentication") {
+            input "userId", "text", title: "User ID", required: true, submitOnChange: true
+            if (settings.userId) {
+                paragraph "After updating the User ID, click 'Initiate Authentication' to receive your OTP code via SMS."
+                href(name: "initiateAuthButton", title: "Initiate Authentication", required: false, page: "initiateAuthPage")
+            }
+        }
+        section("Step 2: Enter OTP Code and Verify") {
+            if (state.stateToken) {
+                input "otpCode", "text", title: "OTP Code", required: true, submitOnChange: true
+                if (settings.otpCode) {
+                    href(name: "verifyOtpCodeButton", title: "Verify OTP Code", required: false, page: "verifyOtpPage")
+                }
+            } else {
+                paragraph "You must first initiate authentication to receive the OTP code."
+            }
+        }
+        section("Step 3: Authorize Session") {
+            if (state.sessionToken) {
+                href(name: "authorizeSessionButton", title: "Authorize Session", required: false, page: "authorizeSessionPage")
+            } else {
+                paragraph "You must first verify the OTP code."
+            }
+        }
+        section("Step 4: Get Access Token") {
+            if (state.oauthCode && state.codeVerifier) {
+                href(name: "getAccessTokenButton", title: "Get Access Token", required: false, page: "getAccessTokenPage")
+            } else {
+                paragraph "You must first authorize the session."
+            }
+        }
+    }
+}
+
+def initiateAuthPage() {
+    initiateAuth(settings.userId)
+    dynamicPage(name: "initiateAuthPage", title: "Initiate Authentication") {
+        section {
+            paragraph "Authentication initiated. You should receive an OTP code via SMS shortly."
+            href(name: "goBack", title: "Go Back", required: false, page: "mainPage")
+        }
+    }
+}
+
+def verifyOtpPage() {
+    verifyOTP(settings.otpCode)
+    dynamicPage(name: "verifyOtpPage", title: "Verify OTP Code") {
+        section {
+            paragraph "OTP code verification initiated."
+            href(name: "goBack", title: "Go Back", required: false, page: "mainPage")
+        }
+    }
+}
+
+def authorizeSessionPage() {
+    authorizeSession()
+    dynamicPage(name: "authorizeSessionPage", title: "Authorize Session") {
+        section {
+            paragraph "Session authorization initiated."
+            href(name: "goBack", title: "Go Back", required: false, page: "mainPage")
+        }
+    }
+}
+
+def getAccessTokenPage() {
+    getAccessToken()
+    dynamicPage(name: "getAccessTokenPage", title: "Get Access Token") {
+        section {
+            paragraph "Access token request initiated."
+            href(name: "goBack", title: "Go Back", required: false, page: "mainPage")
+        }
+    }
+}
+
+def installed() {
+    log.debug "Installed with settings: ${settings}"
+}
+
+def updated() {
+    log.debug "Updated with settings: ${settings}"
+    if (settings.userId) {
+        state.userId = settings.userId
+    }
+    if (settings.otpCode) {
+        state.otpCode = settings.otpCode
+    }
+}
+
+def initiateAuth(userId) {
+    def url = "https://iec-ext.okta.com/api/v1/authn"
+    def headers = [
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    ]
+    def body = JsonOutput.toJson(["username": "${userId}@iec.co.il"])
+
+    log.debug "Sending authentication request to: $url with body: $body"
+    try {
+        httpPost(uri: url, headers: headers, body: body) { response ->
+            log.debug "Authentication response: ${response.data}"
+            if (response.status == 200) {
+                def responseData = response.data
+                state.stateToken = responseData.stateToken
+                state.factorId = responseData._embedded.factors[0].id
+                log.info "Authentication initiated. State token: ${state.stateToken}, Factor ID: ${state.factorId}"
+                triggerSecondStep(state.factorId, state.stateToken)
+            } else {
+                log.error "Failed to initiate authentication: HTTP error ${response.status}"
+                log.debug "Response data: ${response.data}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during initiateAuth: ${e.message}"
+    }
+}
+
+def triggerSecondStep(factorId, stateToken) {
+    def url = "https://iec-ext.okta.com/api/v1/authn/factors/${factorId}/verify"
+    def headers = [
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    ]
+    def body = JsonOutput.toJson(["stateToken": stateToken])
+
+    log.debug "Sending second step request to: $url with body: $body"
+    try {
+        httpPost(uri: url, headers: headers, body: body) { response ->
+            log.debug "Second step response: ${response.data}"
+            if (response.status == 200) {
+                def responseData = response.data
+                log.debug "Second step completed. Verification status: ${responseData.factorResult}"
+                // Now the OTP should be sent to the user
+            } else {
+                log.error "Failed to complete second step: HTTP error ${response.status}"
+                log.debug "Response data: ${response.data}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during triggerSecondStep: ${e.message}"
+    }
+}
+
+def verifyOTP(otpCode) {
+    def url = "https://iec-ext.okta.com/api/v1/authn/factors/${state.factorId}/verify"
+    def headers = [
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    ]
+    def body = JsonOutput.toJson(["stateToken": state.stateToken, "passCode": otpCode])
+
+    log.debug "Submitting OTP code to: $url with headers: $headers and body: $body"
+    try {
+        httpPost(uri: url, headers: headers, body: body) { response ->
+            log.debug "OTP verification response: ${response.data}"
+            if (response.status == 200) {
+                def responseData = response.data
+                state.sessionToken = responseData.sessionToken
+                log.debug "OTP verification successful. Session token: ${state.sessionToken}"
+                // Proceed to next steps if needed
+            } else {
+                log.error "Failed to verify OTP: HTTP error ${response.status}"
+                log.debug "Response data: ${response.data}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during verifyOTP: ${e.message}"
+    }
+}
+
+def authorizeSession() {
+    def appClientId = "0oaqf6zr7yEcQZqqt2p7"
+    def redirectUri = "com.iecrn:/"
+    if (!state.codeVerifier) {
+        state.codeVerifier = generateCodeVerifier()
+    }
+    def codeChallenge = generateCodeChallenge(state.codeVerifier)
+    state.codeChallenge = codeChallenge  // Store code challenge to state for consistency
+    def url = "https://iec-ext.okta.com/oauth2/default/v1/authorize"
+    def queryParams = [
+        client_id: appClientId,
+        response_type: "id_token code",
+        response_mode: "form_post",
+        scope: "openid email profile offline_access",
+        redirect_uri: redirectUri,
+        state: "123abc",
+        nonce: "abc123",
+        code_challenge_method: "S256",
+        sessionToken: state.sessionToken,
+        code_challenge: codeChallenge
+    ]
+
+    log.debug "Sending authorization request to: $url with queryParams: $queryParams"
+    try {
+        httpGet([uri: url, query: queryParams, textParser: true]) { response ->
+            if (response.status == 200) {
+                def htmlResponse = response.data.text
+                log.debug "Authorization response: ${htmlResponse}"
+
+                def codeMatcher = htmlResponse =~ /<input type="hidden" name="code" value="(.+?)"\/>/
+                def idTokenMatcher = htmlResponse =~ /<input type="hidden" name="id_token" value="(.+?)"\/>/
+
+                if (codeMatcher) {
+                    def code = codeMatcher[0][1]
+                    log.debug "Authorization code: ${code}"
+                    state.oauthCode = code
+                } else {
+                    log.error "Failed to extract authorization code from the response."
+                }
+
+                if (idTokenMatcher) {
+                    def idToken = idTokenMatcher[0][1]
+                    log.debug "ID Token: ${idToken}"
+                    state.idToken = idToken
+                } else {
+                    log.error "Failed to extract ID token from the response."
+                }
+
+                // Store the entire response in a single state variable
+                state.fullHtmlResponse = htmlResponse
+
+                log.debug "Full HTML Response: ${state.fullHtmlResponse}"
+            } else {
+                log.error "Failed to authorize session: HTTP error ${response.status}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during authorizeSession: ${e.message}"
+    }
+}
+
+def getAccessToken() {
+    def url = "https://iec-ext.okta.com/oauth2/default/v1/token"
+    def headers = [
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded"
+    ]
+    def body = [
+        client_id: "0oaqf6zr7yEcQZqqt2p7",
+        code_verifier: state.codeVerifier,
+        grant_type: "authorization_code",
+        redirect_uri: "com.iecrn:/",
+        code: state.oauthCode
+    ].collect { k, v -> "${URLEncoder.encode(k, 'UTF-8')}=${URLEncoder.encode(v.toString(), 'UTF-8')}" }.join('&')
+
+    log.debug "Sending access token request to: $url with body: $body"
+    try {
+        httpPost([uri: url, headers: headers, body: body]) { response ->
+            log.debug "Access token response: ${response.data}"
+            if (response.status == 200) {
+                def responseData = response.data
+                state.accessToken = responseData.access_token
+                state.refreshToken = responseData.refresh_token
+                state.idToken = responseData.id_token
+                log.info "Access token: ${state.accessToken}"
+                log.info "Refresh token: ${state.refreshToken}"
+                log.info "ID token: ${state.idToken}"
+
+                if (state.refreshToken) {
+                    runIn(2700, "refreshToken") // Schedule to refresh token in 3 minutes
+                }
+            } else {
+                log.error "Failed to get access token: HTTP error ${response.status}"
+                log.debug "Response data: ${response.data}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during getAccessToken: ${e.message}"
+        if (e.response) {
+            log.debug "Response: ${e.response.data}"
+        }
+    }
+}
+
+def refreshToken() {
+    def url = "https://iec-ext.okta.com/oauth2/default/v1/token"
+    def headers = [
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded"
+    ]
+    def body = [
+        client_id: "0oaqf6zr7yEcQZqqt2p7",
+        redirect_uri: "com.iecrn:/",
+        refresh_token: state.refreshToken,
+        grant_type: "refresh_token",
+        scope: "openid email profile offline_access"
+    ].collect { k, v -> "${URLEncoder.encode(k, 'UTF-8')}=${URLEncoder.encode(v.toString(), 'UTF-8')}" }.join('&')
+
+    log.debug "Sending refresh token request to: $url with body: $body"
+    try {
+        httpPost([uri: url, headers: headers, body: body]) { response ->
+            log.debug "Refresh token response: ${response.data}"
+            if (response.status == 200) {
+                def responseData = response.data
+                state.accessToken = responseData.access_token
+                state.refreshToken = responseData.refresh_token
+                state.idToken = responseData.id_token
+                log.info "Access token (refreshed): ${state.accessToken}"
+                log.info "Refresh token (refreshed): ${state.refreshToken}"
+                log.info "ID token (refreshed): ${state.idToken}"
+
+                if (state.refreshToken) {
+                    runIn(2700, "refreshToken") // Reschedule to refresh token in 3 minutes
+                }
+            } else {
+                log.error "Failed to refresh token: HTTP error ${response.status}"
+                log.debug "Response data: ${response.data}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during refreshToken: ${e.message}"
+        if (e.response) {
+            log.debug "Response: ${e.response.data}"
+        }
+    }
+}
+
+/* def oauthCallback() {
+    def code = params.code
+    def appClientId = "0oaqf6zr7yEcQZqqt2p7"
+    def redirectUri = "https://cloud.hubitat.com/oauth/stateredirect"
+    def url = "https://iec-ext.okta.com/oauth2/default/v1/token"
+    def headers = [
+        "Content-Type": "application/x-www-form-urlencoded"
+    ]
+    def body = "grant_type=authorization_code&code=${code}&client_id=${appClientId}&redirect_uri=${redirectUri}"
+
+    log.debug "Requesting OAuth token with code: ${code}"
+    try {
+        httpPost(uri: url, headers: headers, body: body) { response ->
+            log.debug "OAuth token response: ${response.data}"
+            if (response.status == 200) {
+                def responseData = response.data
+                state.accessToken = responseData.access_token
+                state.refreshToken = responseData.refresh_token
+                log.debug "OAuth token received. Access token: ${state.accessToken}"
+            } else {
+                log.error "Failed to request OAuth token: HTTP error ${response.status}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during oauthCallback: ${e.message}"
+    }
+}
+*/
+
+def generateCodeVerifier() {
+    def random = new Random()
+    def verifierLength = 43 + random.nextInt(86) // Minimum 43, maximum 128
+    def allowedChars = ('A'..'Z') + ('a'..'z') + ('0'..'9') + '-' + '_' + '.' + '~'
+    def verifier = (1..verifierLength).collect { allowedChars[random.nextInt(allowedChars.size())] }.join()
+    log.debug "Generated code verifier: ${verifier}"
+    return verifier
+}
+
+def generateCodeChallenge(verifier) {
+    try {
+        def bytes = verifier.getBytes("US-ASCII")
+        def md = MessageDigest.getInstance("SHA-256")
+        def digest = md.digest(bytes)
+        def base64Url = encodeBase64URL(digest)
+        log.debug "Generated code challenge: ${base64Url} from verifier: ${verifier}"
+        return base64Url
+    } catch (Exception e) {
+        log.error "Error generating code challenge: ${e.message}"
+        throw e
+    }
+}
+
+def encodeBase64URL(byte[] data) {
+    def base64 = data.encodeBase64().toString()
+    base64 = base64.replace('+', '-')
+    base64 = base64.replace('/', '_')
+    base64 = base64.replace('=', '')
+    return base64
+}
