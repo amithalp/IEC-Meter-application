@@ -14,7 +14,7 @@ Before you begin, ensure you have:
 ## Installation
 
 1. **Clone the Repository**:
-git clone https://github.com/amithalp/IEC/IEC-Okta-Authentication.git
+git clone [https://github.com/amithalp/IEC/IEC-Okta-Authentication.git](https://github.com/amithalp/IEC/blob/main/IEC%20Okta%20Authentication)
 
 
 2. **Deploy the Code**:
