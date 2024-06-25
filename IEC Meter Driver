@@ -23,7 +23,7 @@ metadata {
     }
 
     preferences {
-        input name: "billRefreshInterval", type: "number", title: "Electric Bill Refresh Interval (hours)", description: "Enter the number of hours between each electric bill check (default is 24 hours)", defaultValue: 24, required: true
+       // input name: "billRefreshInterval", type: "number", title: "Electric Bill Refresh Interval (hours)", description: "Enter the number of hours between each electric bill check (default is 24 hours)", defaultValue: 24, required: true
     }
 }
 
