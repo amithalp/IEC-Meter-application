@@ -1,0 +1,79 @@
+# IEC Meter Application
+This repository contains the IEC Meter Application, designed for authenticating and managing IEC meters using the Hubitat platform.
+
+# Features
+Authenticate with IEC Okta
+Manage IEC meter data
+Fetch consumption and billing details
+Schedule automatic updates for consumption and billing data
+# Installation
+1. Add the App Code to Hubitat
+Open your Hubitat web interface.
+Navigate to Apps Code.
+Click on + New App.
+Copy the entire content of the IEC_Meter_Application.groovy file from this repository.
+Paste the code into the Hubitat app code editor.
+Click Save.
+2. Add the Driver Code to Hubitat
+Navigate to Drivers Code.
+Click on + New Driver.
+Copy the entire content of the IEC_Meter_Driver.groovy file from this repository.
+Paste the code into the Hubitat driver code editor.
+Click Save.
+# Configuration
+1. Install the App
+Navigate to Apps.
+Click on Add User App.
+Select IEC Meter Application.
+2. Set Up the App
+Enter User ID and Initiate Authentication:
+
+Input your IEC User ID.
+Click Initiate Authentication to receive an OTP code via SMS.
+Enter OTP Code and Verify:
+
+Input the received OTP code.
+Click Verify OTP Code.
+Authorize Session:
+
+Click Authorize Session.
+Get Access Token:
+
+Click Get Access Token.
+Create or Update Device:
+
+Click Create or Update Device.
+Get BP Number:
+
+Click Get BP Number.
+Get Contracts:
+
+Click Get Contracts.
+Get Devices:
+
+Click Get Devices.
+3. Set Logging and Scheduling
+Enable Debug Logging (optional):
+
+Toggle the Enable Debug Logging option to enable or disable debug logs.
+Update Consumption Interval:
+
+Set the interval (in minutes) for updating consumption data. Default is 60 minutes.
+Update Bill Interval:
+
+Set the interval (in hours) for updating bill data. Default is 24 hours.
+4. Save the Configuration
+Click Done to save the configuration and initialize the app.
+Usage
+The app will automatically schedule and update the following:
+
+Yesterday's Consumption: Calculated and updated every updateConsumptionInterval minutes.
+Today's Consumption: Calculated and updated every updateConsumptionInterval minutes.
+Electric Bill: Updated every updateBillInterval hours.
+Refresh Token: Automatically refreshed every 45 minutes.
+License
+Licensed under the Apache License, Version 2.0. See LICENSE for more information.
+
+Support
+For any issues or questions, please open an issue in the GitHub repository.
+
