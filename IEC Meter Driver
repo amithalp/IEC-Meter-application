@@ -1,0 +1,67 @@
+metadata {
+    definition (name: "IEC Meter Driver", namespace: "amithalp", author: "Amit Halperin") {
+        capability "Refresh"
+        // Define attributes with units
+        attribute "bpNumber", "string"
+        attribute "contractId", "string"
+        attribute "deviceNumber", "string"
+        attribute "deviceCode", "string"
+        attribute "totalAmountToPay", "number"
+        attribute "totalInvoicesToPay", "number"
+        attribute "lastInvoiceFromDate", "string"
+        attribute "lastInvoiceToDate", "string"
+        attribute "lastInvoiceAmountOrigin", "number"
+        attribute "lastInvoiceAmountToPay", "number"
+        attribute "lastInvoiceAmountPaid", "number"
+        attribute "lastInvoiceDaysPeriod", "number"
+        attribute "yesterdayConsumption", "number"
+        attribute "todayConsumption", "number"
+        // Define commands for manual triggering
+        command "updateYesterdayConsumption"
+        command "updateTodayConsumption"
+        command "refreshElectricBill"
+    }
+
+    preferences {
+        input name: "billRefreshInterval", type: "number", title: "Electric Bill Refresh Interval (hours)", description: "Enter the number of hours between each electric bill check (default is 24 hours)", defaultValue: 24, required: true
+    }
+}
+
+def installed() {
+    initialize()
+}
+
+def updated() {
+    unschedule()
+    initialize()
+}
+
+def initialize() {
+    refresh()
+}
+
+def refresh() {
+    updateAttributes()
+}
+
+def updateAttributes() {
+    parent.getBpNumber()
+    parent.getContracts()
+    parent.getDevices()
+    parent.getElectricBill()
+    parent.updateYesterdayConsumption()
+    parent.updateTodayConsumption()
+}
+
+// Methods to manually trigger app functions
+def refreshElectricBill() {
+    parent.getElectricBill()
+}
+
+def updateYesterdayConsumption() {
+    parent.updateYesterdayConsumption()
+}
+
+def updateTodayConsumption() {
+    parent.updateTodayConsumption()
+}
