@@ -71,9 +71,9 @@ Yesterday's Consumption: Calculated and updated every updateConsumptionInterval 
 Today's Consumption: Calculated and updated every updateConsumptionInterval minutes.
 Electric Bill: Updated every updateBillInterval hours.
 Refresh Token: Automatically refreshed every 45 minutes.
-License
+# License
 Licensed under the Apache License, Version 2.0. See LICENSE for more information.
 
-Support
+# Support
 For any issues or questions, please open an issue in the GitHub repository.
 
