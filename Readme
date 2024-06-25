@@ -1,5 +1,5 @@
 # IEC Meter Application
-This repository contains the IEC Meter Application, designed for authenticating and managing IEC meters using the Hubitat platform.
+This repository contains the IEC Meter Application and Deiver, designed for authenticating and managing IEC meters using the Hubitat platform.
 
 # Features
 Authenticate with IEC Okta
@@ -20,7 +20,10 @@ Click on + New Driver.
 Copy the entire content of the IEC_Meter_Driver.groovy file from this repository.
 Paste the code into the Hubitat driver code editor.
 Click Save.
+
 # Configuration
+Important note - it is highly recomanded that you open a log session along side your other sessions and take a look at the logs during the setup peocess
+
 1. Install the App
 Navigate to Apps.
 Click on Add User App.
