@@ -46,6 +46,8 @@ Click Get Access Token.
 Create or Update Device:
 
 Click Create or Update Device.
+AT this stage a new device will be created with the IEC Meter device driver. In case a device alreay exist it will only be updated.
+
 Get BP Number:
 
 Click Get BP Number.
