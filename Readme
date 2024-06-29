@@ -1,81 +1,90 @@
 # IEC Meter Application
-This repository contains the IEC Meter Application and Deiver, designed for authenticating and managing IEC meters using the Hubitat platform.
+This repository contains the IEC Meter Application and Driver, designed for authenticating and managing IEC meters using the Hubitat platform.
 
 # Features
 Authenticate with IEC Okta
 Manage IEC meter data
 Fetch consumption and billing details
 Schedule automatic updates for consumption and billing data
+
 # Installation
 1. Add the App Code to Hubitat
-Open your Hubitat web interface.
-Navigate to Apps Code.
-Click on + New App.
-Copy the entire content of the IEC_Meter_Application.groovy file from this repository.
-Paste the code into the Hubitat app code editor.
-Click Save.
+  Open your Hubitat web interface.
+  Navigate to Apps Code.
+  Click on + New App.
+  Copy the entire content of the IEC_Meter_Application.groovy file from this repository.
+  Paste the code into the Hubitat app code editor.
+  Click Save.
 2. Add the Driver Code to Hubitat
-Navigate to Drivers Code.
-Click on + New Driver.
-Copy the entire content of the IEC_Meter_Driver.groovy file from this repository.
-Paste the code into the Hubitat driver code editor.
-Click Save.
+  Navigate to Drivers Code.
+  Click on + New Driver.
+  Copy the entire content of the IEC_Meter_Driver.groovy file from this repository.
+  Paste the code into the Hubitat driver code editor.
+  Click Save.
 
 # Configuration
 Important note - it is highly recomanded that you open a log session along side your other sessions and take a look at the logs during the setup peocess
 
 1. Install the App
-Navigate to Apps.
-Click on Add User App.
-Select IEC Meter Application.
+  Navigate to Apps.
+  Click on Add User App.
+  Select IEC Meter Application.
 2. Set Up the App
-Enter User ID and Initiate Authentication:
+  2.1   Enter User ID and Initiate Authentication. Note - User ID is the User you are using to log into the IEC web site
+        Click Initiate Authentication to receive an OTP code via SMS.
+  2.2   Enter OTP Code and Verify:
+        Input the received OTP code.
+        Click Verify OTP Code.
+  2.3   Authorize Session:
+        Click Authorize Session.
+2.4     Get Access Token:
+        Click Get Access Token.
+2.5     Create or Update Device:
+        Click Create or Update Device.
+        Note - AT this stage a new device will be created with the IEC Meter device driver. In case a device alreay exist it will only be updated.
+2.6     Get BP Number:
+          Click Get BP Number.
+2.7     Get Contracts:
+          Click Get Contracts.
+2.8     Get Devices:
+          Click Get Devices.
+2.9     Set Logging and Scheduling
+          Enable Debug Logging (optional):
+          Toggle the Enable Debug Logging option to enable or disable debug logs.
+          Update Consumption Interval: 
+            Set the interval (in minutes) for updating consumption data (Today's, Yesterday's and This Month's) . Default is 60 minutes.
+          Update Bill Interval:
+            Set the interval (in hours) for updating bill data. Default is 24 hours.
+2.10    Set InfluxDB logging
+        This is relevant only for users with an InfluxDB account who wish to post consumption data into InfluxDB 
+        Current version was tested and works with a local instance of InfluxDB V2 running on a RPI with Token authentication
+        InfluxDB connection set up:
+          InfluxDB Host: InfluxDB URI. ex - 192.168.1.50
+          InfluxDB Port: Usually 8086
+          InfluxDB Org: the value you set in InfluxDB
+          InfluxDB Bucket: the value you set in InfluxDB
+          InfluxDB Token: Produced by InfluxDB
+2.11    Save the Configuration
+          Click Done to save the configuration and initialize the app.
 
-Input your IEC User ID.
-Click Initiate Authentication to receive an OTP code via SMS.
-Enter OTP Code and Verify:
+# Checks: 
+Go to your new app and click the gear icon at the top. Scroll down to the scheduling section and you should see the scheduling for:
+  getElectricBill
+  refreshToken	
+  updateThisMonthConsumption
+  updateTodayConsumption
+  updateYesterdayConsumption
 
-Input the received OTP code.
-Click Verify OTP Code.
-Authorize Session:
-
-Click Authorize Session.
-Get Access Token:
-
-Click Get Access Token.
-Create or Update Device:
-
-Click Create or Update Device.
-AT this stage a new device will be created with the IEC Meter device driver. In case a device alreay exist it will only be updated.
-
-Get BP Number:
-
-Click Get BP Number.
-Get Contracts:
-
-Click Get Contracts.
-Get Devices:
-
-Click Get Devices.
-3. Set Logging and Scheduling
-Enable Debug Logging (optional):
-
-Toggle the Enable Debug Logging option to enable or disable debug logs.
-Update Consumption Interval:
-
-Set the interval (in minutes) for updating consumption data. Default is 60 minutes.
-Update Bill Interval:
-
-Set the interval (in hours) for updating bill data. Default is 24 hours.
-4. Save the Configuration
-Click Done to save the configuration and initialize the app.
-Usage
+# Usage
 The app will automatically schedule and update the following:
+  Yesterday's Consumption: Calculated and updated every updateConsumptionInterval minutes.
+  Today's Consumption: Calculated and updated every updateConsumptionInterval minutes.
+  This month's Consumption : Calculated and updated every updateConsumptionInterval minutes
+  Electric Bill: Updated every updateBillInterval hours.
+  Refresh Token: Automatically refreshed every 45 minutes.
 
-Yesterday's Consumption: Calculated and updated every updateConsumptionInterval minutes.
-Today's Consumption: Calculated and updated every updateConsumptionInterval minutes.
-Electric Bill: Updated every updateBillInterval hours.
-Refresh Token: Automatically refreshed every 45 minutes.
+  You can chesk all scheduling by going to your new app and click the gear icon at the top. Scroll down to the scheduling section and you should see the scheduling
+
 # License
 Licensed under the Apache License, Version 2.0. See LICENSE for more information.
 
