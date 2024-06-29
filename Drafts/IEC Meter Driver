@@ -4,7 +4,7 @@ metadata {
         // Define attributes with units
         attribute "bpNumber", "string"
         attribute "contractId", "string"
-        attribute "deviceNumber", "string"
+        attribute "deviceNumber", "string"https://github.com/amithalp/IEC-Meter-application/blob/main/IEC%20Meter%20Driver
         attribute "deviceCode", "string"
         attribute "totalAmountToPay", "number"
         attribute "totalInvoicesToPay", "number"
