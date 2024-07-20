@@ -1,0 +1,1051 @@
+/*****************************************************************************************************************
+ *  Source: This app was developed with references from a Home Assistant app by GuyKH and the InfluxDB-Logger app by the Hubitat Community. 
+ *
+ *  Raw Source: https://github.com/amithalp/IEC-Meter-application
+ *  License:
+ *   Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+ *   in compliance with the License. You may obtain a copy of the License at:
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *   Unless required by applicable law or agreed to in writing, software distributed under the License is distributed
+ *   on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
+ *   for the specific language governing permissions and limitations under the License.
+ *
+ *   Modifcation History
+ *   Version     Date           Name            Change
+ *   1.0.0            2024-06-25     amithalp        Initial public release
+ *   1.0.1            2024-06-29     amithalp        Added InfluxDB logger capability, thisMonthConsumption attribute and updated documentation
+ *   1.0.2            2024-06-30     amithalp        Added twoDaysAgo consumption as it turns out IEC may not update its API DB for almost 2 days
+ *****************************************************************************************************************/
+import groovy.json.JsonOutput
+import java.security.MessageDigest
+import java.net.URLEncoder
+
+definition(
+    name: "IEC Meter application",
+    namespace: "amithalp",
+    author: "Amit Halperin",
+    description: "Authenticate and Manage IEC meters",
+    category: "My Apps",
+    iconUrl: "https://example.com/icon.png",
+    iconX2Url: "https://example.com/icon@2x.png",
+    version: "1.0.2"  
+)
+
+preferences {
+    page(name: "mainPage", title: "IEC Meter application", content: "mainPage", install: true, uninstall: true)
+    page(name: "initiateAuthPage", title: "Initiate Authentication", content: "initiateAuthPage", install: false, uninstall: false)
+    page(name: "verifyOtpPage", title: "Verify OTP Code", content: "verifyOtpPage", install: false, uninstall: false)
+    page(name: "authorizeSessionPage", title: "Authorize Session", content: "authorizeSessionPage", install: false, uninstall: false)
+    page(name: "getAccessTokenPage", title: "Get Access Token", content: "getAccessTokenPage", install: false, uninstall: false)
+    page(name: "createOrUpdateDevicePage", title: "Create or Update Device", content: "createOrUpdateDevicePage", install: false, uninstall: false)
+    page(name: "getBpNumberPage", title: "Get BP Number", content: "getBpNumberPage", install: false, uninstall: false)
+    page(name: "getContractsPage", title: "Get Contracts", content: "getContractsPage", install: false, uninstall: false)
+    page(name: "getDevicesPage", title: "Get Devices", content: "getDevicesPage", install: false, uninstall: false)
+    page(name: "influxDBSetupPage", title: "InfluxDB Setup", content: "influxDBSetupPage", install: false, uninstall: false)
+}
+
+mappings {
+    path("/oauth/callback") { action: [GET: "oauthCallback"] }
+}
+
+def mainPage() {
+    dynamicPage(name: "mainPage", title: "IEC Meter application", install: true, uninstall: true) {
+        section("Step 1: Enter User ID and Initiate Authentication") {
+            input "userId", "text", title: "User ID", required: true, submitOnChange: true
+            if (settings.userId) {
+                paragraph "After updating the User ID, click 'Initiate Authentication' to receive your OTP code via SMS."
+                href(name: "initiateAuthButton", title: "Initiate Authentication", required: false, page: "initiateAuthPage")
+            }
+        }
+        section("Step 2: Enter OTP Code and Verify") {
+            if (state.stateToken) {
+                input "otpCode", "text", title: "OTP Code", required: true, submitOnChange: true
+                if (settings.otpCode) {
+                    href(name: "verifyOtpCodeButton", title: "Verify OTP Code", required: false, page: "verifyOtpPage")
+                }
+            } else {
+                paragraph "You must first initiate authentication to receive the OTP code."
+            }
+        }
+        section("Step 3: Authorize Session") {
+            if (state.sessionToken) {
+                href(name: "authorizeSessionButton", title: "Authorize Session", required: false, page: "authorizeSessionPage")
+            } else {
+                paragraph "You must first verify the OTP code."
+            }
+        }
+        section("Step 4: Get Access Token") {
+            if (state.oauthCode && state.codeVerifier) {
+                href(name: "getAccessTokenButton", title: "Get Access Token", required: false, page: "getAccessTokenPage")
+            } else {
+                paragraph "You must first authorize the session."
+            }
+        }
+        section("Step 5: Create or Update Device") {
+            if (state.accessToken) {
+                href(name: "createOrUpdateDeviceButton", title: "Create or Update Device", required: false, page: "createOrUpdateDevicePage")
+            } else {
+                paragraph "You must first obtain an access token."
+            }
+        }
+        section("Step 6: Get BP Number") {
+            if (getChildDevices()) {  
+                href(name: "getBpNumberButton", title: "Get BP Number", required: false, page: "getBpNumberPage")
+            } else {
+                paragraph "You must first create a Meter Device."
+            }
+        }
+        section("Step 7: Get Contracts") {
+            if (state.bpNumber) {
+                href(name: "getContractsButton", title: "Get Contracts", required: false, page: "getContractsPage")
+            } else {
+                paragraph "You must first obtain a BP Number."
+            }
+        }
+        section("Step 8: Get Devices") {
+            if (state.contractId) {
+                href(name: "getDevicesButton", title: "Get Devices", required: false, page: "getDevicesPage")
+            } else {
+                paragraph "You must first obtain a Contract ID."
+            }
+        }
+        section("Logging and Scheduling") {
+            input name: "enableDebugLogging", type: "bool", title: "Enable Debug Logging", defaultValue: true, required: false
+            input name: "updateConsumptionInterval", type: "number", title: "Update Consumption Interval (minutes)", defaultValue: 60, required: true
+            input name: "updateBillInterval", type: "number", title: "Update Bill Interval (hours)", defaultValue: 24, required: true
+
+        }
+        section("Step 9: Post to InfluxDB") {
+            input name: "enableInfluxDB", type: "bool", title: "Enable InfluxDB Logging?", defaultValue: false, submitOnChange: true
+            if (settings.enableInfluxDB) {
+                href(name: "influxDBSetup", title: "InfluxDB Connection Setup", description: "Configure InfluxDB connection parameters", required: true, page: "influxDBSetupPage")
+            } 
+        }
+    }
+}
+
+
+/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+
+def installed() {
+    log.info "Installed with settings: ${settings}"
+    initialize()
+}
+
+def updated() {
+    log.info "Updated with settings: ${settings}"
+    if (settings.userId) {
+        state.userId = settings.userId
+    }
+    if (settings.otpCode) {
+        state.otpCode = settings.otpCode
+    }
+    unschedule()
+    initialize()
+}
+
+def initialize() {
+    def consumptionInterval = settings.updateConsumptionInterval ?: 60
+    def billInterval = settings.updateBillInterval ?: 24
+
+    def consumptionCron = "0 0/${consumptionInterval} * * * ?"
+    def billCron = "0 0 0/${billInterval} * * ?"
+
+    logDebug "Scheduling updateTwoDaysAgoConsumption with cron: ${consumptionCron}"
+    logDebug "Scheduling updateYesterdayConsumption with cron: ${consumptionCron}"
+    logDebug "Scheduling updateTodayConsumption with cron: ${consumptionCron}"
+    logDebug "Scheduling updateThisMonthConsumption with cron: ${consumptionCron}"
+    logDebug "Scheduling getElectricBill with cron: ${billCron}"
+
+    // Adjusted cron expressions
+    if (consumptionInterval == 60) {
+        schedule("0 0 * * * ?", "updateTwoDaysAgoConsumption")
+        schedule("0 0 * * * ?", "updateYesterdayConsumption")
+        schedule("0 0 * * * ?", "updateTodayConsumption")
+        schedule("0 0 * * * ?", "updateThisMonthConsumption")
+    } else {
+        schedule(consumptionCron, "updateTwoDaysAgoConsumption")
+        schedule(consumptionCron, "updateYesterdayConsumption")
+        schedule(consumptionCron, "updateTodayConsumption")
+        schedule(consumptionCron, "updateThisMonthConsumption")
+    }
+    
+    if (billInterval == 24) {
+        schedule("0 0 0 * * ?", "getElectricBill")
+    } else {
+        schedule(billCron, "getElectricBill")
+    }
+    
+    // Call refreshToken immediately and then schedule it to run every 45 minutes
+    refreshToken()
+}
+
+def logDebug(msg) {
+    if (settings.enableDebugLogging) {
+        log.debug msg
+    }
+}
+
+/*----------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+
+
+def initiateAuthPage() {
+    initiateAuth(settings.userId)
+    dynamicPage(name: "initiateAuthPage", title: "Initiate Authentication") {
+        section {
+            paragraph "Authentication initiated. You should receive an OTP code via SMS shortly."
+            href(name: "goBack", title: "Go Back", required: false, page: "mainPage")
+        }
+    }
+}
+
+def verifyOtpPage() {
+    verifyOTP(settings.otpCode)
+    dynamicPage(name: "verifyOtpPage", title: "Verify OTP Code") {
+        section {
+            paragraph "OTP code verification initiated."
+            href(name: "goBack", title: "Go Back", required: false, page: "mainPage")
+        }
+    }
+}
+
+def authorizeSessionPage() {
+    authorizeSession()
+    dynamicPage(name: "authorizeSessionPage", title: "Authorize Session") {
+        section {
+            paragraph "Session authorization initiated."
+            href(name: "goBack", title: "Go Back", required: false, page: "mainPage")
+        }
+    }
+}
+
+def getAccessTokenPage() {
+    getAccessToken()
+    dynamicPage(name: "getAccessTokenPage", title: "Get Access Token") {
+        section {
+            paragraph "Access token request initiated."
+            href(name: "goBack", title: "Go Back", required: false, page: "mainPage")
+        }
+    }
+}
+
+def createOrUpdateDevicePage() {
+    createOrUpdateDevice()
+    dynamicPage(name: "createOrUpdateDevicePage", title: "Create or Update Device") {
+        section {
+            paragraph "Creating or Updating Device..."
+            href(name: "goBack", title: "Go Back", required: false, page: "mainPage")
+        }
+    }
+}
+def getBpNumberPage() {
+    getBpNumber()
+    dynamicPage(name: "getBpNumberPage", title: "Get BP Number") {
+        section {
+            paragraph "Fetching BP Number..."
+            href(name: "goBack", title: "Go Back", required: false, page: "mainPage")
+        }
+    }
+}
+
+def getContractsPage() {
+    getContracts()
+    dynamicPage(name: "getContractsPage", title: "Get Contracts") {
+        section {
+            paragraph "Fetching Contracts data..."
+            href(name: "goBack", title: "Go Back", required: false, page: "mainPage")
+        }
+    }
+}
+
+def getDevicesPage() {
+    getDevices()
+    dynamicPage(name: "getDevicesPage", title: "Get Devices") {
+        section {
+            paragraph "Fetching Devices data..."
+            href(name: "goBack", title: "Go Back", required: false, page: "mainPage")
+        }
+    }
+}
+
+
+
+def initiateAuth(userId) {
+    def url = "https://iec-ext.okta.com/api/v1/authn"
+    def headers = [
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    ]
+    def body = JsonOutput.toJson(["username": "${userId}@iec.co.il"])
+
+    logDebug  "Sending authentication request to: $url with body: $body"
+    try {
+        httpPost(uri: url, headers: headers, body: body) { response ->
+            logDebug  "Authentication response: ${response.data}"
+            if (response.status == 200) {
+                def responseData = response.data
+                state.stateToken = responseData.stateToken
+                state.factorId = responseData._embedded.factors[0].id
+                log.info "Authentication initiated. State token: ${state.stateToken}, Factor ID: ${state.factorId}"
+                triggerSecondStep(state.factorId, state.stateToken)
+            } else {
+                log.error "Failed to initiate authentication: HTTP error ${response.status}"
+                logDebug  "Response data: ${response.data}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during initiateAuth: ${e.message}"
+    }
+}
+
+def triggerSecondStep(factorId, stateToken) {
+    def url = "https://iec-ext.okta.com/api/v1/authn/factors/${factorId}/verify"
+    def headers = [
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    ]
+    def body = JsonOutput.toJson(["stateToken": stateToken])
+
+    logDebug  "Sending second step request to: $url with body: $body"
+    try {
+        httpPost(uri: url, headers: headers, body: body) { response ->
+            logDebug  "Second step response: ${response.data}"
+            if (response.status == 200) {
+                def responseData = response.data
+                log.info "Second step completed. Verification status: ${responseData.factorResult}"
+                // Now the OTP should be sent to the user
+            } else {
+                log.error "Failed to complete second step: HTTP error ${response.status}"
+                logDebug "Response data: ${response.data}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during triggerSecondStep: ${e.message}"
+    }
+}
+
+def verifyOTP(otpCode) {
+    def url = "https://iec-ext.okta.com/api/v1/authn/factors/${state.factorId}/verify"
+    def headers = [
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    ]
+    def body = JsonOutput.toJson(["stateToken": state.stateToken, "passCode": otpCode])
+
+    logDebug  "Submitting OTP code to: $url with headers: $headers and body: $body"
+    try {
+        httpPost(uri: url, headers: headers, body: body) { response ->
+            logDebug  "OTP verification response: ${response.data}"
+            if (response.status == 200) {
+                def responseData = response.data
+                state.sessionToken = responseData.sessionToken
+                log.info "OTP verification successful. Session token: ${state.sessionToken}"
+                // Proceed to next steps if needed
+            } else {
+                log.error "Failed to verify OTP: HTTP error ${response.status}"
+                logDebug "Response data: ${response.data}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during verifyOTP: ${e.message}"
+    }
+}
+
+def authorizeSession() {
+    def appClientId = "0oaqf6zr7yEcQZqqt2p7"
+    def redirectUri = "com.iecrn:/"
+    if (!state.codeVerifier) {
+        state.codeVerifier = generateCodeVerifier()
+    }
+    def codeChallenge = generateCodeChallenge(state.codeVerifier)
+    state.codeChallenge = codeChallenge  // Store code challenge to state for consistency
+    def url = "https://iec-ext.okta.com/oauth2/default/v1/authorize"
+    def queryParams = [
+        client_id: appClientId,
+        response_type: "id_token code",
+        response_mode: "form_post",
+        scope: "openid email profile offline_access",
+        redirect_uri: redirectUri,
+        state: "123abc",
+        nonce: "abc123",
+        code_challenge_method: "S256",
+        sessionToken: state.sessionToken,
+        code_challenge: codeChallenge
+    ]
+
+    logDebug  "Sending authorization request to: $url with queryParams: $queryParams"
+    try {
+        httpGet([uri: url, query: queryParams, textParser: true]) { response ->
+            if (response.status == 200) {
+                def htmlResponse = response.data.text
+                logDebug  "Authorization response: ${htmlResponse}"
+
+                def codeMatcher = htmlResponse =~ /<input type="hidden" name="code" value="(.+?)"\/>/
+                def idTokenMatcher = htmlResponse =~ /<input type="hidden" name="id_token" value="(.+?)"\/>/
+
+                if (codeMatcher) {
+                    def code = codeMatcher[0][1]
+                    log.info  "Authorization code: ${code}"
+                    state.oauthCode = code
+                } else {
+                    log.error "Failed to extract authorization code from the response."
+                }
+
+                if (idTokenMatcher) {
+                    def idToken = idTokenMatcher[0][1]
+                    log.info "ID Token: ${idToken}"
+                    state.idToken = idToken
+                } else {
+                    log.error "Failed to extract ID token from the response."
+                }
+
+                // Store the entire response in a single state variable
+                state.fullHtmlResponse = htmlResponse
+
+                logDebug  "Full HTML Response: ${state.fullHtmlResponse}"
+            } else {
+                log.error "Failed to authorize session: HTTP error ${response.status}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during authorizeSession: ${e.message}"
+    }
+}
+
+def getAccessToken() {
+    def url = "https://iec-ext.okta.com/oauth2/default/v1/token"
+    def headers = [
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded"
+    ]
+    def body = [
+        client_id: "0oaqf6zr7yEcQZqqt2p7",
+        code_verifier: state.codeVerifier,
+        grant_type: "authorization_code",
+        redirect_uri: "com.iecrn:/",
+        code: state.oauthCode
+    ].collect { k, v -> "${URLEncoder.encode(k, 'UTF-8')}=${URLEncoder.encode(v.toString(), 'UTF-8')}" }.join('&')
+
+    logDebug  "Sending access token request to: $url with body: $body"
+    try {
+        httpPost([uri: url, headers: headers, body: body]) { response ->
+            logDebug  "Access token response: ${response.data}"
+            if (response.status == 200) {
+                def responseData = response.data
+                state.accessToken = responseData.access_token
+                state.refreshToken = responseData.refresh_token
+                state.idToken = responseData.id_token
+                log.info "Access token: ${state.accessToken}"
+                log.info "Refresh token: ${state.refreshToken}"
+                log.info "ID token: ${state.idToken}"
+
+                if (state.refreshToken) {
+                    runIn(2700, "refreshToken") // Schedule to refresh token
+                }
+            } else {
+                log.error "Failed to get access token: HTTP error ${response.status}"
+                logDebug  "Response data: ${response.data}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during getAccessToken: ${e.message}"
+        if (e.response) {
+            logDebug  "Response: ${e.response.data}"
+        }
+    }
+}
+
+def refreshToken() {
+    def url = "https://iec-ext.okta.com/oauth2/default/v1/token"
+    def headers = [
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded"
+    ]
+    def body = [
+        client_id: "0oaqf6zr7yEcQZqqt2p7",
+        redirect_uri: "com.iecrn:/",
+        refresh_token: state.refreshToken,
+        grant_type: "refresh_token",
+        scope: "openid email profile offline_access"
+    ].collect { k, v -> "${URLEncoder.encode(k, 'UTF-8')}=${URLEncoder.encode(v.toString(), 'UTF-8')}" }.join('&')
+
+    logDebug  "Sending refresh token request to: $url with body: $body"
+    try {
+        httpPost([uri: url, headers: headers, body: body]) { response ->
+            logDebug "Refresh token response: ${response.data}"
+            if (response.status == 200) {
+                def responseData = response.data
+                state.accessToken = responseData.access_token
+                state.refreshToken = responseData.refresh_token
+                state.idToken = responseData.id_token
+                log.info "Access token (refreshed): ${state.accessToken}"
+                log.info "Refresh token (refreshed): ${state.refreshToken}"
+                log.info "ID token (refreshed): ${state.idToken}"
+
+                // Schedule the next refresh
+                schedule("0 0/45 * * * ?", "refreshToken") 
+                
+            } else {
+                log.error "Failed to refresh token: HTTP error ${response.status}"
+                logDebug "Response data: ${response.data}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during refreshToken: ${e.message}"
+        if (e.response) {
+            logDebug "Response: ${e.response.data}"
+        }
+    }
+}
+
+def createOrUpdateDevice() {
+    logDebug "Starting device initialization..."
+    // Create the device if it doesn't exist
+    if (!getChildDevices()) {
+        logDebug "No child devices found. Creating new device..."
+        addChildDevice("amithalp", "IEC Meter Driver", "IecMeter", null, [label: "IEC Meter"])
+        
+        def device = getChildDevice("IecMeter")
+        log.info "Device: ${device} created successfully."
+    // runIn(20, "updateDeviceValues")  // Delay to ensure the device is created before setting initial values
+    } else {
+        logDebug "Device already exists. No need to create a new Device."
+       // updateDeviceValues()
+    }
+    //runEvery5Minutes(refreshMeterData)  // Adjust timing based on needs
+    //logDebug "Scheduled meter data refresh."
+}
+
+def getBpNumber() {
+    def url = "https://iecapi.iec.co.il/api/outages/accounts"
+    def headers = [
+        "authority": "iecapi.iec.co.il",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en,he;q=0.9",
+        "dnt": "1",
+        "origin": "https://www.iec.co.il",
+        "referer": "https://www.iec.co.il/",
+        "sec-ch-ua": "\"Chromium\";v=\"121\", \"Not A(Brand\";v=\"99\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"macOS\"",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "x-iec-idt": "1",
+        "x-iec-webview": "1",
+        "Authorization": "Bearer ${state.idToken}", // Use the id_token here
+        "Cookie": "ARRAffinity=e942fac4c3842c04fc2139440c5a0682d1c4bfb4f77eaeddd9a5ebf14cc8b59d; ARRAffinitySameSite=e942fac4c3842c04fc2139440c5a0682d1c4bfb4f77eaeddd9a5ebf14cc8b59d; GCLB=CPr2lYG4jKfaVxAD"
+    ]
+    
+    logDebug "Preparing to send Get BP Number request to URL: $url with headers: $headers"
+    
+    try {
+        httpGet([uri: url, headers: headers]) { response ->
+            if (response.status == 200) {
+                def responseData = response.data
+                logDebug "Response data: ${responseData}"
+                def bpNumber = responseData.data[0]?.accountNumber
+                state.bpNumber = bpNumber
+                log.info "BP Number fetched successfully: $bpNumber"
+                def device = getChildDevice("IecMeter")
+                device.sendEvent(name: "bpNumber", value: state.bpNumber)
+            } else {
+                log.error "Failed to fetch BP Number: HTTP error ${response.status}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during getBpNumber: ${e.message}"
+        if (e.response) {
+            logDebug "Response: ${e.response.data}"
+        }
+    }
+}
+
+def getContracts() {
+    def accountNumber = state.bpNumber  // Ensure that bpNumber has been fetched before calling this function
+    def url = "https://iecapi.iec.co.il/api/customer/contract/${accountNumber}"
+    def headers = [
+        "authority": "iecapi.iec.co.il",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en,he;q=0.9",
+        "dnt": "1",
+        "origin": "https://www.iec.co.il",
+        "referer": "https://www.iec.co.il/",
+        "sec-ch-ua": "\"Chromium\";v=\"121\", \"Not A(Brand\";v=\"99\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"macOS\"",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "x-iec-idt": "1",
+        "x-iec-webview": "1",
+        "Authorization": "Bearer ${state.idToken}", // Use the id_token here
+        "Cookie": "ARRAffinity=e942fac4c3842c04fc2139440c5a0682d1c4bfb4f77eaeddd9a5ebf14cc8b59d; ARRAffinitySameSite=e942fac4c3842c04fc2139440c5a0682d1c4bfb4f77eaeddd9a5ebf14cc8b59d; GCLB=CPr2lYG4jKfaVxAD"
+    ]
+    
+    logDebug "Preparing to send Get Contracts request to URL: $url with headers: $headers"
+    
+    try {
+        httpGet([uri: url, headers: headers]) { response ->
+            if (response.status == 200) {
+                def responseData = response.data
+                logDebug "Response data: ${responseData}"
+                def contractId = responseData.data.contracts[0]?.contractId
+                state.contractId = contractId
+                log.info "Contract ID fetched successfully: $contractId"
+                def device = getChildDevice("IecMeter")
+                device.sendEvent(name: "contractId", value: state.contractId)
+            } else {
+                log.error "Failed to fetch Contract ID: HTTP error ${response.status}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during getContracts: ${e.message}"
+        if (e.response) {
+            logDebug "Response: ${e.response.data}"
+        }
+    }
+}
+
+def getDevices() {
+    def contractId = state.contractId  // Ensure that contractId has been fetched before calling this function
+    def url = "https://iecapi.iec.co.il/api/Device/${contractId}"
+    def headers = [
+        "authority": "iecapi.iec.co.il",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en,he;q=0.9",
+        "dnt": "1",
+        "origin": "https://www.iec.co.il",
+        "referer": "https://www.iec.co.il/",
+        "sec-ch-ua": "\"Chromium\";v=\"121\", \"Not A(Brand\";v=\"99\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"macOS\"",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "x-iec-idt": "1",
+        "x-iec-webview": "1",
+        "Authorization": "Bearer ${state.idToken}", // Use the id_token here
+        "Cookie": "ARRAffinity=e942fac4c3842c04fc2139440c5a0682d1c4bfb4f77eaeddd9a5ebf14cc8b59d; ARRAffinitySameSite=e942fac4c3842c04fc2139440c5a0682d1c4bfb4f77eaeddd9a5ebf14cc8b59d; GCLB=CPr2lYG4jKfaVxAD"
+    ]
+    
+    logDebug "Preparing to send Get Devices request to URL: $url with headers: $headers"
+    
+    try {
+        httpGet([uri: url, headers: headers]) { response ->
+            if (response.status == 200) {
+                def responseData = response.data
+                logDebug "Response data: ${responseData}"
+                def deviceNumber = responseData[0]?.deviceNumber
+                def deviceCode = responseData[0]?.deviceCode
+                state.deviceNumber = deviceNumber
+                state.deviceCode = deviceCode
+                def device = getChildDevice("IecMeter")
+                log.info "Device Number fetched successfully: $deviceNumber"
+                log.info "Device Code fetched successfully: $deviceCode"
+                device.sendEvent(name: "deviceNumber", value: state.deviceNumber)
+                device.sendEvent(name: "deviceCode", value: state.deviceCode)
+            } else {
+                log.error "Failed to fetch Device details: HTTP error ${response.status}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during getDevices: ${e.message}"
+        if (e.response) {
+            logDebug "Response: ${e.response.data}"
+        }
+    }
+}
+
+def influxDBSetupPage() {
+    dynamicPage(name: "influxDBSetupPage", title: "InfluxDB Connection Setup", install: false, uninstall: false) {
+        section {
+            input "influxDBHost", "text", title: "InfluxDB Host", required: true
+            input "influxDBPort", "number", title: "InfluxDB Port", defaultValue: 8086, required: true
+            input "influxDBOrg", "text", title: "InfluxDB Org", required: true
+            input "influxDBBucket", "text", title: "InfluxDB Bucket", required: false
+            //input "influxDBPassword", "password", title: "InfluxDB Password", required: false
+            input "influxDBToken", "text", title: "InfluxDB Token", required: false
+        }
+    }
+}
+
+
+def updateDeviceValues() {
+    def device = getChildDevice("IecMeter")
+    if (device) {
+        logDebug "Updting values for the device..."
+        //device.sendEvent(name: "bpNumber", value: state.bpNumber)
+        //device.sendEvent(name: "contractId", value: state.contractId)
+        //device.sendEvent(name: "deviceNumber", value: state.deviceNumber)
+        //device.sendEvent(name: "deviceCode", value: state.deviceCode)
+        //device.sendEvent(name: "idToken", value: state.idToken)
+        
+        //device.updateAttributes("bpNumber", state.bpNumber)
+        //device.updateAttributes("contractId", state.contractId)
+        //device.updateAttributes("deviceNumber", state.deviceNumber)
+        //device.updateAttributes("deviceCode", state.deviceCode)
+        log.info "Device values updated successfully."
+    } else {
+        log.warn "Device not found. Unable to set update values."
+    }
+}
+
+def getElectricBill() {
+    def contractId = state.contractId  // Ensure that contractId has been fetched before calling this function
+    def bpNumber = state.bpNumber
+    if (!contractId || !bpNumber) {
+        log.warn "Contract ID or BP Number is not available. Skipping electric bill fetch."
+        return
+    }
+    def url = "https://iecapi.iec.co.il/api/ElectricBillsDrawers/ElectricBills/${contractId}/${bpNumber}"
+               
+    def headers = getHeaders()
+    //def params = [
+        //uri: "https://iecapi.iec.co.il/api/ElectricBillsDrawers/ElectricBills/${contractId}/${contractId}",
+    //    headers: headers
+    //]
+    logDebug "Preparing to send Get Electric Bill request to URL: $url with headers: $headers"
+    try {
+        httpGet([uri: url, headers: headers]) { response ->
+            if (response.status == 200) {
+                def responseData = response.data
+                logDebug "Response data: ${responseData}"
+                
+                def totalAmountToPay = responseData.data.totalAmountToPay
+                def totalInvoicesToPay = responseData.data.totalInvoicesToPay
+                
+                def firstInvoice = responseData.data.invoices[0]
+                def lastInvoiceFromDate = firstInvoice.fromDate
+                def lastInvoiceToDate = firstInvoice.toDate
+                def lastInvoiceAmountOrigin = firstInvoice.amountOrigin
+                def lastInvoiceAmountToPay = firstInvoice.amountToPay
+                def lastInvoiceAmountPaid = firstInvoice.amountPaid
+                def lastInvoiceDaysPeriod = firstInvoice.daysPeriod
+                
+                def device = getChildDevice("IecMeter")
+                if (device) {
+                    device.sendEvent(name: "totalAmountToPay", value: totalAmountToPay, unit: "NIS")
+                    device.sendEvent(name: "totalInvoicesToPay", value: totalInvoicesToPay, unit: "NIS")
+                    device.sendEvent(name: "lastInvoiceFromDate", value: lastInvoiceFromDate)
+                    device.sendEvent(name: "lastInvoiceToDate", value: lastInvoiceToDate)
+                    device.sendEvent(name: "lastInvoiceAmountOrigin", value: lastInvoiceAmountOrigin, unit: "NIS")
+                    //logDebug "Sent Last invoice amount origion: ${lastInvoiceAmountOrigin}"
+                    device.sendEvent(name: "lastInvoiceAmountToPay", value: lastInvoiceAmountToPay, unit: "NIS")
+                    device.sendEvent(name: "lastInvoiceAmountPaid", value: lastInvoiceAmountPaid, unit: "NIS")
+                    device.sendEvent(name: "lastInvoiceDaysPeriod", value: lastInvoiceDaysPeriod, unit: "Days")
+                    
+                    log.info "Electric bill details updated successfully."
+                } else {
+                    log.warn "Device not found. Unable to update electric bill details."
+                }
+            } else {
+                log.error "Failed to fetch electric bill details: HTTP error ${resp.status}"
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during getElectricBill: ${e.message}"
+        if (e.response) {
+            logDebug "Response: ${e.response.data}"
+        }
+    }
+}
+
+def postRemoteReadingRange(String fromDate, int resolution, Closure completionHandler) {
+    def deviceNumber = state.deviceNumber
+    def deviceCode = state.deviceCode
+    def contractId = state.contractId  // Ensure that contractId has been fetched before calling this function
+    if (!contractId) {
+        log.warn "Contract ID is not available. Skipping Remote Reading Range fetch."
+        completionHandler(null)
+        return
+    }
+    def url = "https://iecapi.iec.co.il/api/Consumption/RemoteReadingRange/${contractId}"
+    def todayDate = new Date().format("yyyy-MM-dd")  // Today's date in the required format
+
+    def headers = getHeaders()
+    headers["Content-Type"] = "application/json"  // Add Content-Type header
+
+    def body = JsonOutput.toJson([
+        "meterSerialNumber": deviceNumber,
+        "meterCode": deviceCode,
+        "lastInvoiceDate": todayDate,
+        "fromDate": fromDate,
+        "resolution": resolution
+    ])
+    logDebug "Preparing to send Post Remote Reading Range to URL: $url with headers: $headers AND with body: $body"
+    try {
+        httpPost([uri: url, headers: headers, body: body]) { response ->
+            logDebug "Received response with status: ${response.status}"
+            if (response.status == 200) {
+                def responseData = response.data
+                logDebug "Response data: ${responseData}"
+                completionHandler(responseData)
+            } else {
+                log.error "Failed to fetch Remote Reading Range: HTTP error ${response.status}"
+                completionHandler(null)
+            }
+        }
+    } catch (Exception e) {
+        log.error "Error during postRemoteReadingRange : ${e.message}"
+        if (e.response) {
+            logDebug "Response: ${e.response.data}"
+        }
+        completionHandler(null)
+    }
+}
+
+
+
+def getHeaders() {
+    return [
+        "authority": "iecapi.iec.co.il",
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en,he;q=0.9",
+        "dnt": "1",
+        "origin": "https://www.iec.co.il",
+        "referer": "https://www.iec.co.il/",
+        "sec-ch-ua": "\"Chromium\";v=\"121\", \"Not A(Brand\";v=\"99\"",
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": "\"macOS\"",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "x-iec-idt": "1",
+        "x-iec-webview": "1",
+        "Authorization": "Bearer ${state.idToken}",
+        "Cookie": "ARRAffinity=e942fac4c3842c04fc2139440c5a0682d1c4bfb4f77eaeddd9a5ebf14cc8b59d; ARRAffinitySameSite=e942fac4c3842c04fc2139440c5a0682d1c4bfb4f77eaeddd9a5ebf14cc8b59d; GCLB=CPr2lYG4jKfaVxAD"
+    ]
+}
+
+def updateTwoDaysAgoConsumption() {
+    def twoDaysAgoDate = (new Date() - 2).format("yyyy-MM-dd")
+    logDebug "Updating two days ago's consumption for date: ${twoDaysAgoDate}"
+    
+    postRemoteReadingRange(twoDaysAgoDate, 1) { responseData ->
+        logDebug "Received response for twoDaysAgo's consumption: ${responseData}"
+        
+        if (responseData) {
+            if (settings.enableInfluxDB) {
+                def formattedData = formatDataForInfluxDB(responseData.data)
+                postDataToInfluxDB(formattedData)
+            }
+            def twoDaysAgoConsumption = responseData.totalConsumptionForPeriod
+            def device = getChildDevice("IecMeter")
+            if (device) {
+                device.sendEvent(name: "twoDaysAgoConsumption", value: twoDaysAgoConsumption, unit: "kW")
+                log.info "twoDaysAgo consumption updated successfully: ${twoDaysAgoConsumption} kW"
+            } else {
+                log.warn "Device not found. Unable to update twoDaysAgo consumption."
+            }
+        } else {
+            log.error "Failed to update twoDaysAgo's consumption. No response data."
+        }
+    }
+}
+
+
+def updateYesterdayConsumption() {
+    def yesterdayDate = (new Date() - 1).format("yyyy-MM-dd")
+    logDebug "Updating yesterday's consumption for date: ${yesterdayDate}"
+    
+    postRemoteReadingRange(yesterdayDate, 1) { responseData ->
+        logDebug "Received response for yesterday's consumption: ${responseData}"
+        
+        if (responseData) {
+            if (settings.enableInfluxDB) {
+                def formattedData = formatDataForInfluxDB(responseData.data)
+                postDataToInfluxDB(formattedData)
+            }
+            def yesterdayConsumption = responseData.totalConsumptionForPeriod
+            def device = getChildDevice("IecMeter")
+            if (device) {
+                device.sendEvent(name: "yesterdayConsumption", value: yesterdayConsumption, unit: "kW")
+                log.info "Yesterday consumption updated successfully: ${yesterdayConsumption} kW"
+            } else {
+                log.warn "Device not found. Unable to update yesterday consumption."
+            }
+        } else {
+            log.error "Failed to update yesterday's consumption. No response data."
+        }
+    }
+}
+
+
+def updateTodayConsumption() {
+    def todayDate = new Date().format("yyyy-MM-dd")
+    logDebug "Updating today's consumption for date: ${todayDate}"
+    
+    postRemoteReadingRange(todayDate, 1) { responseData ->
+        logDebug "Received response for today's consumption: ${responseData}"
+        
+        if (responseData) {
+            if (settings.enableInfluxDB) {
+                def formattedData = formatDataForInfluxDB(responseData.data)
+                postDataToInfluxDB(formattedData)
+            }
+            def todayConsumption = responseData.totalConsumptionForPeriod
+            def device = getChildDevice("IecMeter")
+            if (device) {
+                device.sendEvent(name: "todayConsumption", value: todayConsumption, unit: "kW")
+                log.info "Today consumption updated successfully: ${todayConsumption} kW"
+            } else {
+                log.warn "Device not found. Unable to update today consumption."
+            }
+        } else {
+            log.error "Failed to update today's consumption. No response data."
+        }
+    }
+}
+
+def updateThisMonthConsumption() {
+    def todayDate = new Date().format("yyyy-MM-dd")
+    logDebug "Updating this month's consumption for date: ${todayDate}"
+    
+    postRemoteReadingRange(todayDate, 3) { responseData ->   //resolution =3 will retrieve a daily consumption from the 1st of the month till TODAY
+        logDebug "Received response for this month's consumption: ${responseData}"
+        
+        if (responseData) {
+            //if (settings.enableInfluxDB) {
+            //    def formattedData = formatDataForInfluxDB(responseData.data)
+            //    postDataToInfluxDB(formattedData)
+            //}
+            def thisMonthConsumption = responseData.totalConsumptionForPeriod
+            def device = getChildDevice("IecMeter")
+            if (device) {
+                device.sendEvent(name: "thisMonthConsumption", value: thisMonthConsumption, unit: "kW")
+                log.info "This month's consumption updated successfully: ${thisMonthConsumption} kW"
+            } else {
+                log.warn "Device not found. Unable to update this month's consumption."
+            }
+        } else {
+            log.error "Failed to update this month's consumption. No response data."
+        }
+    }
+}
+
+// Utility function to update the attributes
+def updateAttributeIfChanged(device, attributeName, newValue, unit = null) {
+    def currentValue = device.currentValue(attributeName)
+    if (currentValue != newValue) {
+        device.sendEvent(name: attributeName, value: newValue, unit: unit)
+        log.info "Updated device attribute ${attributeName} from ${currentValue} to ${newValue}"
+    } else {
+        logDebug "No change for ${attributeName}, skipping event creation."
+    }
+}
+
+
+
+def generateCodeVerifier() {
+    def random = new Random()
+    def verifierLength = 43 + random.nextInt(86) // Minimum 43, maximum 128
+    def allowedChars = ('A'..'Z') + ('a'..'z') + ('0'..'9') + '-' + '_' + '.' + '~'
+    def verifier = (1..verifierLength).collect { allowedChars[random.nextInt(allowedChars.size())] }.join()
+    log.info "Generated code verifier: ${verifier}"
+    return verifier
+}
+
+def generateCodeChallenge(verifier) {
+    try {
+        def bytes = verifier.getBytes("US-ASCII")
+        def md = MessageDigest.getInstance("SHA-256")
+        def digest = md.digest(bytes)
+        def base64Url = encodeBase64URL(digest)
+        log.info "Generated code challenge: ${base64Url} from verifier: ${verifier}"
+        return base64Url
+    } catch (Exception e) {
+        log.error "Error generating code challenge: ${e.message}"
+        throw e
+    }
+}
+
+def encodeBase64URL(byte[] data) {
+    def base64 = data.encodeBase64().toString()
+    base64 = base64.replace('+', '-')
+    base64 = base64.replace('/', '_')
+    base64 = base64.replace('=', '')
+    return base64
+}
+
+//*************************************THIS SECTION DEALING WITH DATA POSTING TO INFLUXDB***********************************************************
+
+// THIS FUNCTION POST DATA TO INFLUXDB BUCKET DEFINED BY THE USER
+
+// Function to format data for InfluxDB
+def formatDataForInfluxDB(data) {
+    return data.collect { entry ->
+        def timestamp = parseDateToNano(entry.date)
+        "IEC_Meter value=${entry.value} ${timestamp}"
+    }.join("\n")
+}
+
+// Function to parse date to nanoseconds
+def parseDateToNano(dateString) {
+    def date = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSSSS", dateString)
+    return date.time * 1_000_000
+}
+
+// Function to post data to InfluxDB with detailed logging
+private void postDataToInfluxDB(String data) {
+    String uri = buildInfluxDBURI()
+    def headers = [
+        "Authorization": getAuthorizationHeader(),
+        "Content-Type": "text/plain"
+    ]
+
+    log.debug "Posting data to InfluxDB"
+    log.debug "URI: ${uri}"
+    log.debug "Headers: ${headers}"
+    log.debug "Data: ${data}"
+
+    try {
+        asynchttpPost('handleInfluxResponse', [
+            uri: uri,
+            requestContentType: 'application/json',
+            contentType: 'application/json',
+            headers: headers,
+            ignoreSSLIssues: true,
+            timeout: 60,
+            body: data
+        ])
+    } catch (Exception e) {
+        log.error "Error posting data to InfluxDB: ${e.message}"
+    }
+}
+
+
+def handleInfluxResponse(hubResponse, data) {
+    if (hubResponse.status < 400) {
+        log.debug "Data successfully posted to InfluxDB."
+    } else {
+        log.error "Failed to post data to InfluxDB: Status ${hubResponse.status}, Error: ${hubResponse.errorMessage}"
+    }
+}
+
+
+//BUILT THE INFLUXDB URI ACCORDING TO SETUP BY THE USER
+private String buildInfluxDBURI() {
+    String uri = settings.influxDBHost.startsWith("https") ? "https://" : "http://"
+    uri += "${settings.influxDBHost}:${settings.influxDBPort}"
+    
+    uri += "/api/v2/write?org=${settings.influxDBOrg}&bucket=${settings.influxDBBucket}"
+    return uri
+}
+
+private String getAuthorizationHeader() {
+    if (settings.influxDBToken) {
+        return "Token ${settings.influxDBToken}"
+    //} else if (settings.influxDBUser && settings.influxDBPassword) {
+    //    return "Basic " + "${settings.influxDBUser}:${settings.influxDBPassword}".bytes.encodeBase64().toString()
+    }
+    return null
+}
+
