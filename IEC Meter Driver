@@ -1,0 +1,101 @@
+/*****************************************************************************************************************
+ *  Raw Source: https://github.com/amithalp/IEC-Meter-application
+ *  License:
+ *   Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+ *   in compliance with the License. You may obtain a copy of the License at:
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *   Unless required by applicable law or agreed to in writing, software distributed under the License is distributed
+ *   on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
+ *   for the specific language governing permissions and limitations under the License.
+ *
+ *   Modifcation History
+ *   Date           Name            Change
+ *   2024-06-25     amithalp        version 1.0.0 - Initial public release
+ *   2024-06-29     amithalp        version 1.0.1 - added thisMonthConsumption attribute and updated documentation
+ *   2024-06-30     amithalp        Version 1.0.2 - added TwoDaysAgoConsumption
+ *****************************************************************************************************************/
+
+metadata {
+    definition (name: "IEC Meter Driver", namespace: "amithalp", author: "Amit Halperin", version: "1.0.1") {
+        capability "Refresh"
+        // Define attributes with units
+        attribute "bpNumber", "string"
+        attribute "contractId", "string"
+        attribute "deviceNumber", "string"
+        attribute "deviceCode", "string"
+        attribute "totalAmountToPay", "number"
+        attribute "totalInvoicesToPay", "number"
+        attribute "lastInvoiceFromDate", "string"
+        attribute "lastInvoiceToDate", "string"
+        attribute "lastInvoiceAmountOrigin", "number"
+        attribute "lastInvoiceAmountToPay", "number"
+        attribute "lastInvoiceAmountPaid", "number"
+        attribute "lastInvoiceDaysPeriod", "number"
+        attribute "twoDaysAgoConsumption", "number"
+        attribute "yesterdayConsumption", "number"
+        attribute "todayConsumption", "number"
+        attribute "thisMonthConsumption", "number"
+        // Define commands for manual triggering
+        command "updateTwoDaysAgoConsumption"
+        command "updateYesterdayConsumption"
+        command "updateTodayConsumption"
+        command "updateThisMonthConsumption"
+        command "refreshElectricBill"
+    }
+
+    preferences {
+       // input name: "billRefreshInterval", type: "number", title: "Electric Bill Refresh Interval (hours)", description: "Enter the number of hours between each electric bill check (default is 24 hours)", defaultValue: 24, required: true
+    }
+}
+
+def installed() {
+    initialize()
+}
+
+def updated() {
+    unschedule()
+    initialize()
+}
+
+def initialize() {
+    refresh()
+}
+
+def refresh() {
+    updateAttributes()
+}
+
+def updateAttributes() {
+    parent.getBpNumber()
+    parent.getContracts()
+    parent.getDevices()
+    parent.getElectricBill()
+    parent.updateTwoDaysAgoConsumption()
+    parent.updateYesterdayConsumption()
+    parent.updateTodayConsumption()
+    parent.updateThisMonthConsumption()
+}
+
+// Methods to manually trigger app functions
+def refreshElectricBill() {
+    parent.getElectricBill()
+}
+
+def updateTwoDaysAgoConsumption() {
+    parent.updateTwoDaysAgoConsumption()
+}
+
+def updateYesterdayConsumption() {
+    parent.updateYesterdayConsumption()
+}
+
+def updateTodayConsumption() {
+    parent.updateTodayConsumption()
+}
+
+def updateThisMonthConsumption() {
+    parent.updateThisMonthConsumption()
+}
+
