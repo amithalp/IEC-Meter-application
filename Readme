@@ -78,6 +78,7 @@ Go to your new app and click the gear icon at the top. Scroll down to the schedu
 
 # Usage
 The app will automatically schedule and update the following:
+  Two days ago Consumption: Calculated and updated every updateConsumptionInterval minutes.
   Yesterday's Consumption: Calculated and updated every updateConsumptionInterval minutes.
   Today's Consumption: Calculated and updated every updateConsumptionInterval minutes.
   This month's Consumption : Calculated and updated every updateConsumptionInterval minutes
