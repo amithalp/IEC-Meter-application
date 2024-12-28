@@ -74,6 +74,7 @@ Go to your new app and click the gear icon at the top. Scroll down to the schedu
   updateThisMonthConsumption
   updateTodayConsumption
   updateYesterdayConsumption
+  updateTwoDaysAgoConsumption
 
 # Usage
 The app will automatically schedule and update the following:
