@@ -1,3 +1,5 @@
+/* Todo list
+* Add alert when data is not pulled for some reaosn
 /*****************************************************************************************************************
  *  Source: This app was developed with references from a Home Assistant app by GuyKH and the InfluxDB-Logger app by the Hubitat Community. 
  *
@@ -17,6 +19,8 @@
  *   1.0.0            2024-06-25     amithalp        Initial public release
  *   1.0.1            2024-06-29     amithalp        Added InfluxDB logger capability, thisMonthConsumption attribute and updated documentation
  *   1.0.2            2024-06-30     amithalp        Added twoDaysAgo consumption as it turns out IEC may not update its API DB for almost 2 days
+ *   1.0.3            2024-08-25     amithalp        Fix for cases where responseData.totalConsumptionForPeriod is NULL (set value to zero)
+ *   1.0.4		      2024-12-28	 amithalp		 Add updateConsumptionForDate to allow fetching specific date consumption
  *****************************************************************************************************************/
 import groovy.json.JsonOutput
 import java.security.MessageDigest
@@ -30,7 +34,7 @@ definition(
     category: "My Apps",
     iconUrl: "https://example.com/icon.png",
     iconX2Url: "https://example.com/icon@2x.png",
-    version: "1.0.2"  
+    version: "1.0.4"  
 )
 
 preferences {
@@ -50,6 +54,7 @@ mappings {
     path("/oauth/callback") { action: [GET: "oauthCallback"] }
 }
 
+//****************This section for app main page***********************************************************************************
 def mainPage() {
     dynamicPage(name: "mainPage", title: "IEC Meter application", install: true, uninstall: true) {
         section("Step 1: Enter User ID and Initiate Authentication") {
@@ -127,7 +132,7 @@ def mainPage() {
 }
 
 
-/*---------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+/*----------------------------------Basic functions------------------------------------------------------------------------------------------------------*/
 
 
 def installed() {
@@ -189,7 +194,7 @@ def logDebug(msg) {
     }
 }
 
-/*----------------------------------------------------------------------------------------------------------------------------------------------------------------------------*/
+/*-----------------------------------------------Authirization process-------------------------------------------------------------------------------------------------------------*/
 
 
 def initiateAuthPage() {
@@ -802,7 +807,7 @@ def postRemoteReadingRange(String fromDate, int resolution, Closure completionHa
 }
 
 
-
+//------------------------------------Headers definition - will be used in all calls-------------------------------------------------------------------------
 def getHeaders() {
     return [
         "authority": "iecapi.iec.co.il",
@@ -826,7 +831,7 @@ def getHeaders() {
 }
 
 def updateTwoDaysAgoConsumption() {
-    def twoDaysAgoDate = (new Date() - 2).format("yyyy-MM-dd")
+    def twoDaysAgoDate = (new Date() -2).format("yyyy-MM-dd")
     logDebug "Updating two days ago's consumption for date: ${twoDaysAgoDate}"
     
     postRemoteReadingRange(twoDaysAgoDate, 1) { responseData ->
@@ -837,7 +842,7 @@ def updateTwoDaysAgoConsumption() {
                 def formattedData = formatDataForInfluxDB(responseData.data)
                 postDataToInfluxDB(formattedData)
             }
-            def twoDaysAgoConsumption = responseData.totalConsumptionForPeriod
+            def twoDaysAgoConsumption = responseData.totalConsumptionForPeriod ?: 0 //set to zero when NULL
             def device = getChildDevice("IecMeter")
             if (device) {
                 device.sendEvent(name: "twoDaysAgoConsumption", value: twoDaysAgoConsumption, unit: "kW")
@@ -853,7 +858,7 @@ def updateTwoDaysAgoConsumption() {
 
 
 def updateYesterdayConsumption() {
-    def yesterdayDate = (new Date() - 1).format("yyyy-MM-dd")
+    def yesterdayDate = (new Date() -1).format("yyyy-MM-dd")
     logDebug "Updating yesterday's consumption for date: ${yesterdayDate}"
     
     postRemoteReadingRange(yesterdayDate, 1) { responseData ->
@@ -864,7 +869,7 @@ def updateYesterdayConsumption() {
                 def formattedData = formatDataForInfluxDB(responseData.data)
                 postDataToInfluxDB(formattedData)
             }
-            def yesterdayConsumption = responseData.totalConsumptionForPeriod
+            def yesterdayConsumption = responseData.totalConsumptionForPeriod ?: 0 //set to zero when NULL
             def device = getChildDevice("IecMeter")
             if (device) {
                 device.sendEvent(name: "yesterdayConsumption", value: yesterdayConsumption, unit: "kW")
@@ -891,7 +896,8 @@ def updateTodayConsumption() {
                 def formattedData = formatDataForInfluxDB(responseData.data)
                 postDataToInfluxDB(formattedData)
             }
-            def todayConsumption = responseData.totalConsumptionForPeriod
+            // def todayConsumption = responseData.totalConsumptionForPeriod
+            def todayConsumption = responseData.totalConsumptionForPeriod ?: 0 //set to zero when NULL
             def device = getChildDevice("IecMeter")
             if (device) {
                 device.sendEvent(name: "todayConsumption", value: todayConsumption, unit: "kW")
@@ -905,6 +911,33 @@ def updateTodayConsumption() {
     }
 }
 
+def updateConsumptionForDate(String date) {
+    logDebug "Updating consumption for specific date: ${date}"
+
+    postRemoteReadingRange(date, 1) { responseData ->
+        logDebug "Received response for specific date's consumption: ${responseData}"
+
+        if (responseData) {
+            if (settings.enableInfluxDB) {
+                def formattedData = formatDataForInfluxDB(responseData.data)
+                postDataToInfluxDB(formattedData)
+            }
+            def consumption = responseData.totalConsumptionForPeriod ?: 0 // Set to zero when NULL
+            def device = getChildDevice("IecMeter")
+            if (device) {
+                device.sendEvent(name: "customDateConsumption", value: "${date}: ${consumption} kW", unit: "kW")
+                log.info "Consumption for date ${date} updated successfully: ${consumption} kW"
+            } else {
+                log.warn "Device not found. Unable to update consumption for date: ${date}"
+            }
+        } else {
+            log.error "Failed to update consumption for date: ${date}. No response data."
+        }
+    }
+}
+
+
+
 def updateThisMonthConsumption() {
     def todayDate = new Date().format("yyyy-MM-dd")
     logDebug "Updating this month's consumption for date: ${todayDate}"
@@ -917,7 +950,7 @@ def updateThisMonthConsumption() {
             //    def formattedData = formatDataForInfluxDB(responseData.data)
             //    postDataToInfluxDB(formattedData)
             //}
-            def thisMonthConsumption = responseData.totalConsumptionForPeriod
+            def thisMonthConsumption = responseData.totalConsumptionForPeriod ?: 0 //set to zero when NULL
             def device = getChildDevice("IecMeter")
             if (device) {
                 device.sendEvent(name: "thisMonthConsumption", value: thisMonthConsumption, unit: "kW")
@@ -1001,10 +1034,10 @@ private void postDataToInfluxDB(String data) {
         "Content-Type": "text/plain"
     ]
 
-    log.debug "Posting data to InfluxDB"
-    log.debug "URI: ${uri}"
-    log.debug "Headers: ${headers}"
-    log.debug "Data: ${data}"
+    logDebug "Posting data to InfluxDB"
+    logDebug "URI: ${uri}"
+    logDebug "Headers: ${headers}"
+    logDebug "Data: ${data}"
 
     try {
         asynchttpPost('handleInfluxResponse', [
@@ -1024,7 +1057,7 @@ private void postDataToInfluxDB(String data) {
 
 def handleInfluxResponse(hubResponse, data) {
     if (hubResponse.status < 400) {
-        log.debug "Data successfully posted to InfluxDB."
+        logDebug "Data successfully posted to InfluxDB."
     } else {
         log.error "Failed to post data to InfluxDB: Status ${hubResponse.status}, Error: ${hubResponse.errorMessage}"
     }
