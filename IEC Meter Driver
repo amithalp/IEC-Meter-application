@@ -15,10 +15,11 @@
  *   2024-06-25     amithalp        version 1.0.0 - Initial public release
  *   2024-06-29     amithalp        version 1.0.1 - added thisMonthConsumption attribute and updated documentation
  *   2024-06-30     amithalp        Version 1.0.2 - added TwoDaysAgoConsumption
+ *   2024-12-28     amithalp        Version 1.0.3 - Add updateConsumptionForDate to allow fetching specific date consumption
  *****************************************************************************************************************/
 
 metadata {
-    definition (name: "IEC Meter Driver", namespace: "amithalp", author: "Amit Halperin", version: "1.0.1") {
+    definition (name: "IEC Meter Driver", namespace: "amithalp", author: "Amit Halperin", version: "1.0.3") {
         capability "Refresh"
         // Define attributes with units
         attribute "bpNumber", "string"
@@ -37,16 +38,20 @@ metadata {
         attribute "yesterdayConsumption", "number"
         attribute "todayConsumption", "number"
         attribute "thisMonthConsumption", "number"
+        attribute "customDateConsumption", "string" // New attribute
         // Define commands for manual triggering
         command "updateTwoDaysAgoConsumption"
         command "updateYesterdayConsumption"
         command "updateTodayConsumption"
         command "updateThisMonthConsumption"
         command "refreshElectricBill"
+        command "updateConsumptionForDate", [[type:"String", description:"Date in YYYY-MM-DD format"]] // New command with String input
+          
     }
 
     preferences {
        // input name: "billRefreshInterval", type: "number", title: "Electric Bill Refresh Interval (hours)", description: "Enter the number of hours between each electric bill check (default is 24 hours)", defaultValue: 24, required: true
+       // input name: "customDate", type: "text", title: "Enter Date (yyyy-MM-dd)", description: "Specify the date to fetch consumption data", required: false
     }
 }
 
@@ -99,3 +104,11 @@ def updateThisMonthConsumption() {
     parent.updateThisMonthConsumption()
 }
 
+// New function to handle user-input date
+def updateConsumptionForDate(String date) {
+    if (!date || !(date ==~ /\d{4}-\d{2}-\d{2}/)) {
+        log.error "Invalid date format. Please provide a date in 'yyyy-MM-dd' format."
+        return
+    }
+    parent.updateConsumptionForDate(date)
+}
