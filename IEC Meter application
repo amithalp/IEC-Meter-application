@@ -21,6 +21,8 @@
  *   1.0.2            2024-06-30     amithalp        Added twoDaysAgo consumption as it turns out IEC may not update its API DB for almost 2 days
  *   1.0.3            2024-08-25     amithalp        Fix for cases where responseData.totalConsumptionForPeriod is NULL (set value to zero)
  *   1.0.4		      2024-12-28	 amithalp		 Add updateConsumptionForDate to allow fetching specific date consumption
+ *   1.0.5			  2024-12-29	 amithalp		 Fixed scheduling error to allow billInterval to be larger than 24 hors and consumptionInterval larger than 60
+ *   1.0.6			  2024-07-10	 amithalp		 Added contractId to the postRemoteReadingRange method as IEC made a change to their API
  *****************************************************************************************************************/
 import groovy.json.JsonOutput
 import java.security.MessageDigest
@@ -34,7 +36,7 @@ definition(
     category: "My Apps",
     iconUrl: "https://example.com/icon.png",
     iconX2Url: "https://example.com/icon@2x.png",
-    version: "1.0.4"  
+    version: "1.0.6"  
 )
 
 preferences {
@@ -156,8 +158,9 @@ def initialize() {
     def consumptionInterval = settings.updateConsumptionInterval ?: 60
     def billInterval = settings.updateBillInterval ?: 24
 
-    def consumptionCron = "0 0/${consumptionInterval} * * * ?"
-    def billCron = "0 0 0/${billInterval} * * ?"
+    // Dynamically generate valid Cron expressions
+    def consumptionCron = generateCronForMinutes(consumptionInterval)
+    def billCron = generateCronForDaysOrHours(billInterval)
 
     logDebug "Scheduling updateTwoDaysAgoConsumption with cron: ${consumptionCron}"
     logDebug "Scheduling updateYesterdayConsumption with cron: ${consumptionCron}"
@@ -165,28 +168,52 @@ def initialize() {
     logDebug "Scheduling updateThisMonthConsumption with cron: ${consumptionCron}"
     logDebug "Scheduling getElectricBill with cron: ${billCron}"
 
-    // Adjusted cron expressions
-    if (consumptionInterval == 60) {
-        schedule("0 0 * * * ?", "updateTwoDaysAgoConsumption")
-        schedule("0 0 * * * ?", "updateYesterdayConsumption")
-        schedule("0 0 * * * ?", "updateTodayConsumption")
-        schedule("0 0 * * * ?", "updateThisMonthConsumption")
-    } else {
+    if (consumptionCron) {
         schedule(consumptionCron, "updateTwoDaysAgoConsumption")
         schedule(consumptionCron, "updateYesterdayConsumption")
         schedule(consumptionCron, "updateTodayConsumption")
         schedule(consumptionCron, "updateThisMonthConsumption")
     }
     
-    if (billInterval == 24) {
-        schedule("0 0 0 * * ?", "getElectricBill")
-    } else {
+    if (billCron) {
         schedule(billCron, "getElectricBill")
     }
-    
+
     // Call refreshToken immediately and then schedule it to run every 45 minutes
     refreshToken()
 }
+
+def generateCronForMinutes(interval) {
+    if (interval <= 60) {
+        return "0 0/${interval} * * * ?"
+    } else if (interval % 60 == 0) {
+        def hours = interval / 60
+        return "0 0 0/${hours} * * ?"
+    } else {
+        log.error "Invalid consumptionInterval: ${interval}. Must be divisible by 60 for hours or less than 60 for minutes."
+        return null
+    }
+}
+
+def generateCronForDaysOrHours(interval) {
+    if (interval < 24) {
+        // Hourly schedule within a single day
+        return "0 0 0/${interval} * * ?"
+    } else {
+        // Convert hours into days
+        def days = (int) (interval / 24) // Integer division for days
+        def remainingHours = interval % 24
+        if (remainingHours == 0) {
+            // Purely day-based schedule
+            return "0 0 0 */${days} * ?"
+        } else {
+            // Mixed day and hour-based schedule is not supported by Cron, approximate
+            log.warn "Bill interval spans multiple days and hours. Adjusting to the nearest day."
+            return "0 0 0 */${days + 1} * ?"
+        }
+    }
+}
+
 
 def logDebug(msg) {
     if (settings.enableDebugLogging) {
@@ -780,6 +807,7 @@ def postRemoteReadingRange(String fromDate, int resolution, Closure completionHa
     def body = JsonOutput.toJson([
         "meterSerialNumber": deviceNumber,
         "meterCode": deviceCode,
+        "contractNumber": contractId,           // <-- ADDED THIS LINE
         "lastInvoiceDate": todayDate,
         "fromDate": fromDate,
         "resolution": resolution
