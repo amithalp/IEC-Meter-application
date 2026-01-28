@@ -23,6 +23,7 @@
  *   1.0.4		      2024-12-28	 amithalp		 Add updateConsumptionForDate to allow fetching specific date consumption
  *   1.0.5			  2024-12-29	 amithalp		 Fixed scheduling error to allow billInterval to be larger than 24 hors and consumptionInterval larger than 60
  *   1.0.6			  2024-07-10	 amithalp		 Added contractId to the postRemoteReadingRange method as IEC made a change to their API
+ *	 1.0.7			  2026-01-28	 amithalp		 Cleaned log.info to be short and informative only
  *****************************************************************************************************************/
 import groovy.json.JsonOutput
 import java.security.MessageDigest
@@ -36,7 +37,7 @@ definition(
     category: "My Apps",
     iconUrl: "https://example.com/icon.png",
     iconX2Url: "https://example.com/icon@2x.png",
-    version: "1.0.6"  
+    version: "1.0.7" 
 )
 
 preferences {
@@ -321,7 +322,7 @@ def initiateAuth(userId) {
                 def responseData = response.data
                 state.stateToken = responseData.stateToken
                 state.factorId = responseData._embedded.factors[0].id
-                log.info "Authentication initiated. State token: ${state.stateToken}, Factor ID: ${state.factorId}"
+                log.info "Authentication initiated"//. State token: ${state.stateToken}, Factor ID: ${state.factorId}"
                 triggerSecondStep(state.factorId, state.stateToken)
             } else {
                 log.error "Failed to initiate authentication: HTTP error ${response.status}"
@@ -374,7 +375,7 @@ def verifyOTP(otpCode) {
             if (response.status == 200) {
                 def responseData = response.data
                 state.sessionToken = responseData.sessionToken
-                log.info "OTP verification successful. Session token: ${state.sessionToken}"
+                log.info "OTP verification successful"//. Session token: ${state.sessionToken}"
                 // Proceed to next steps if needed
             } else {
                 log.error "Failed to verify OTP: HTTP error ${response.status}"
@@ -420,7 +421,7 @@ def authorizeSession() {
 
                 if (codeMatcher) {
                     def code = codeMatcher[0][1]
-                    log.info  "Authorization code: ${code}"
+                    log.info  "Authorization code success"//: ${code}"
                     state.oauthCode = code
                 } else {
                     log.error "Failed to extract authorization code from the response."
@@ -428,7 +429,7 @@ def authorizeSession() {
 
                 if (idTokenMatcher) {
                     def idToken = idTokenMatcher[0][1]
-                    log.info "ID Token: ${idToken}"
+                    log.info "ID Token success"//: ${idToken}"
                     state.idToken = idToken
                 } else {
                     log.error "Failed to extract ID token from the response."
@@ -470,9 +471,9 @@ def getAccessToken() {
                 state.accessToken = responseData.access_token
                 state.refreshToken = responseData.refresh_token
                 state.idToken = responseData.id_token
-                log.info "Access token: ${state.accessToken}"
-                log.info "Refresh token: ${state.refreshToken}"
-                log.info "ID token: ${state.idToken}"
+                log.info "Access token received"//: ${state.accessToken}"
+                log.info "Refresh token received"//: ${state.refreshToken}"
+                log.info "ID token received"//: ${state.idToken}"
 
                 if (state.refreshToken) {
                     runIn(2700, "refreshToken") // Schedule to refresh token
@@ -513,9 +514,9 @@ def refreshToken() {
                 state.accessToken = responseData.access_token
                 state.refreshToken = responseData.refresh_token
                 state.idToken = responseData.id_token
-                log.info "Access token (refreshed): ${state.accessToken}"
-                log.info "Refresh token (refreshed): ${state.refreshToken}"
-                log.info "ID token (refreshed): ${state.idToken}"
+                log.info "Access token (refreshed)"//: ${state.accessToken}"
+                log.info "Refresh token (refreshed)"//: ${state.refreshToken}"
+                log.info "ID token (refreshed)"//: ${state.idToken}"
 
                 // Schedule the next refresh
                 schedule("0 0/45 * * * ?", "refreshToken") 
@@ -582,7 +583,7 @@ def getBpNumber() {
                 logDebug "Response data: ${responseData}"
                 def bpNumber = responseData.data[0]?.accountNumber
                 state.bpNumber = bpNumber
-                log.info "BP Number fetched successfully: $bpNumber"
+                log.info "BP Number fetched successfully"//: $bpNumber"
                 def device = getChildDevice("IecMeter")
                 device.sendEvent(name: "bpNumber", value: state.bpNumber)
             } else {
@@ -629,7 +630,7 @@ def getContracts() {
                 logDebug "Response data: ${responseData}"
                 def contractId = responseData.data.contracts[0]?.contractId
                 state.contractId = contractId
-                log.info "Contract ID fetched successfully: $contractId"
+                log.info "Contract ID fetched successfully"//: $contractId"
                 def device = getChildDevice("IecMeter")
                 device.sendEvent(name: "contractId", value: state.contractId)
             } else {
@@ -679,8 +680,8 @@ def getDevices() {
                 state.deviceNumber = deviceNumber
                 state.deviceCode = deviceCode
                 def device = getChildDevice("IecMeter")
-                log.info "Device Number fetched successfully: $deviceNumber"
-                log.info "Device Code fetched successfully: $deviceCode"
+                log.info "Device Number fetched successfully"//: $deviceNumber"
+                log.info "Device Code fetched successfully"//: $deviceCode"
                 device.sendEvent(name: "deviceNumber", value: state.deviceNumber)
                 device.sendEvent(name: "deviceCode", value: state.deviceCode)
             } else {
@@ -1010,7 +1011,7 @@ def generateCodeVerifier() {
     def verifierLength = 43 + random.nextInt(86) // Minimum 43, maximum 128
     def allowedChars = ('A'..'Z') + ('a'..'z') + ('0'..'9') + '-' + '_' + '.' + '~'
     def verifier = (1..verifierLength).collect { allowedChars[random.nextInt(allowedChars.size())] }.join()
-    log.info "Generated code verifier: ${verifier}"
+    log.info "Generated code verifier"//: ${verifier}"
     return verifier
 }
 
@@ -1020,7 +1021,7 @@ def generateCodeChallenge(verifier) {
         def md = MessageDigest.getInstance("SHA-256")
         def digest = md.digest(bytes)
         def base64Url = encodeBase64URL(digest)
-        log.info "Generated code challenge: ${base64Url} from verifier: ${verifier}"
+        log.info "Generated code challenge"//: ${base64Url} from verifier: ${verifier}"
         return base64Url
     } catch (Exception e) {
         log.error "Error generating code challenge: ${e.message}"
