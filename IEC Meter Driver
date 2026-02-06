@@ -16,10 +16,13 @@
  *   2024-06-29     amithalp        version 1.0.1 - added thisMonthConsumption attribute and updated documentation
  *   2024-06-30     amithalp        Version 1.0.2 - added TwoDaysAgoConsumption
  *   2024-12-28     amithalp        Version 1.0.3 - Add updateConsumptionForDate to allow fetching specific date consumption
+ *   2026-02-06		amithalp		Version 1.0.4 - Added export (back stream) support:
+ *                              				  - New attributes for export values (today/yesterday/twoDaysAgo/thisMonth)
+ *                              				  - App now posts both import (value) and export fields to InfluxDB; driver remains backward compatible
  *****************************************************************************************************************/
 
 metadata {
-    definition (name: "IEC Meter Driver", namespace: "amithalp", author: "Amit Halperin", version: "1.0.3") {
+    definition (name: "IEC Meter Driver", namespace: "amithalp", author: "Amit Halperin", version: "1.0.4") {
         capability "Refresh"
         // Define attributes with units
         attribute "bpNumber", "string"
@@ -34,19 +37,26 @@ metadata {
         attribute "lastInvoiceAmountToPay", "number"
         attribute "lastInvoiceAmountPaid", "number"
         attribute "lastInvoiceDaysPeriod", "number"
+        // Import
         attribute "twoDaysAgoConsumption", "number"
         attribute "yesterdayConsumption", "number"
         attribute "todayConsumption", "number"
         attribute "thisMonthConsumption", "number"
-        attribute "customDateConsumption", "string" // New attribute
+        attribute "customDateConsumption", "string"
+        // Export
+        attribute "twoDaysAgoExport", "number"
+        attribute "yesterdayExport", "number"
+        attribute "todayExport", "number"
+        attribute "thisMonthExport", "number"
+        attribute "customDateExport", "string"
+        
         // Define commands for manual triggering
-        command "updateTwoDaysAgoConsumption"
-        command "updateYesterdayConsumption"
-        command "updateTodayConsumption"
-        command "updateThisMonthConsumption"
-        command "refreshElectricBill"
-        command "updateConsumptionForDate", [[type:"String", description:"Date in YYYY-MM-DD format"]] // New command with String input
-          
+        command "updateTwoDaysAgoData"
+		command "updateYesterdayData"
+		command "updateTodayData"
+		command "updateThisMonthData"
+		command "updateDataForDate", [[type:"String", description:"Date in YYYY-MM-DD format"]]
+
     }
 
     preferences {
@@ -77,10 +87,10 @@ def updateAttributes() {
     parent.getContracts()
     parent.getDevices()
     parent.getElectricBill()
-    parent.updateTwoDaysAgoConsumption()
-    parent.updateYesterdayConsumption()
-    parent.updateTodayConsumption()
-    parent.updateThisMonthConsumption()
+    parent.updateTwoDaysAgoData()
+    parent.updateYesterdayData()
+    parent.updateTodayData()
+    parent.updateThisMonthData()
 }
 
 // Methods to manually trigger app functions
@@ -88,27 +98,16 @@ def refreshElectricBill() {
     parent.getElectricBill()
 }
 
-def updateTwoDaysAgoConsumption() {
-    parent.updateTwoDaysAgoConsumption()
-}
+def updateTwoDaysAgoData()  { parent.updateTwoDaysAgoData() }
+def updateYesterdayData()   { parent.updateYesterdayData() }
+def updateTodayData()       { parent.updateTodayData() }
+def updateThisMonthData()   { parent.updateThisMonthData() }
 
-def updateYesterdayConsumption() {
-    parent.updateYesterdayConsumption()
-}
-
-def updateTodayConsumption() {
-    parent.updateTodayConsumption()
-}
-
-def updateThisMonthConsumption() {
-    parent.updateThisMonthConsumption()
-}
-
-// New function to handle user-input date
-def updateConsumptionForDate(String date) {
+def updateDataForDate(String date) {
     if (!date || !(date ==~ /\d{4}-\d{2}-\d{2}/)) {
         log.error "Invalid date format. Please provide a date in 'yyyy-MM-dd' format."
         return
     }
-    parent.updateConsumptionForDate(date)
+    parent.updateDataForDate(date)
 }
+
