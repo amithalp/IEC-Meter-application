@@ -1,5 +1,5 @@
 /* Todo list
-* Add alert when data is not pulled for some reaosn
+* Add alert when data is not pulled for some reason
 /*****************************************************************************************************************
  *  Source: This app was developed with references from a Home Assistant app by GuyKH and the InfluxDB-Logger app by the Hubitat Community. 
  *
@@ -24,6 +24,10 @@
  *   1.0.5			  2024-12-29	 amithalp		 Fixed scheduling error to allow billInterval to be larger than 24 hors and consumptionInterval larger than 60
  *   1.0.6			  2024-07-10	 amithalp		 Added contractId to the postRemoteReadingRange method as IEC made a change to their API
  *	 1.0.7			  2026-01-28	 amithalp		 Cleaned log.info to be short and informative only
+ *   1.0.8      	  2026-02-06     amithalp    	 Added export (back stream) support:
+ *                                        				 - Fetch both consumption and export in a single API call
+ *                                         				- Post both values to InfluxDB under one measurement (IEC_Meter)
+ *                                         				- Preserve existing 'value' field for backward compatibility
  *****************************************************************************************************************/
 import groovy.json.JsonOutput
 import java.security.MessageDigest
@@ -37,7 +41,7 @@ definition(
     category: "My Apps",
     iconUrl: "https://example.com/icon.png",
     iconX2Url: "https://example.com/icon@2x.png",
-    version: "1.0.7" 
+    version: "1.0.8" 
 )
 
 preferences {
@@ -121,7 +125,7 @@ def mainPage() {
         }
         section("Logging and Scheduling") {
             input name: "enableDebugLogging", type: "bool", title: "Enable Debug Logging", defaultValue: true, required: false
-            input name: "updateConsumptionInterval", type: "number", title: "Update Consumption Interval (minutes)", defaultValue: 60, required: true
+            input name: "updateDataInterval", type: "number", title: "Update Data Interval (minutes)", defaultValue: 60, required: true
             input name: "updateBillInterval", type: "number", title: "Update Bill Interval (hours)", defaultValue: 24, required: true
 
         }
@@ -163,17 +167,17 @@ def initialize() {
     def consumptionCron = generateCronForMinutes(consumptionInterval)
     def billCron = generateCronForDaysOrHours(billInterval)
 
-    logDebug "Scheduling updateTwoDaysAgoConsumption with cron: ${consumptionCron}"
-    logDebug "Scheduling updateYesterdayConsumption with cron: ${consumptionCron}"
-    logDebug "Scheduling updateTodayConsumption with cron: ${consumptionCron}"
-    logDebug "Scheduling updateThisMonthConsumption with cron: ${consumptionCron}"
+    logDebug "Scheduling updateTwoDaysAgoData with cron: ${consumptionCron}"
+    logDebug "Scheduling updateYesterdayData with cron: ${consumptionCron}"
+    logDebug "Scheduling updateTodayData with cron: ${consumptionCron}"
+    logDebug "Scheduling updateThisMonthData with cron: ${consumptionCron}"
     logDebug "Scheduling getElectricBill with cron: ${billCron}"
 
     if (consumptionCron) {
-        schedule(consumptionCron, "updateTwoDaysAgoConsumption")
-        schedule(consumptionCron, "updateYesterdayConsumption")
-        schedule(consumptionCron, "updateTodayConsumption")
-        schedule(consumptionCron, "updateThisMonthConsumption")
+        schedule(consumptionCron, "updateTwoDaysAgoData")
+		schedule(consumptionCron, "updateYesterdayData")
+		schedule(consumptionCron, "updateTodayData")
+		schedule(consumptionCron, "updateThisMonthData")
     }
     
     if (billCron) {
@@ -185,16 +189,32 @@ def initialize() {
 }
 
 def generateCronForMinutes(interval) {
-    if (interval <= 60) {
-        return "0 0/${interval} * * * ?"
-    } else if (interval % 60 == 0) {
-        def hours = interval / 60
-        return "0 0 0/${hours} * * ?"
-    } else {
-        log.error "Invalid consumptionInterval: ${interval}. Must be divisible by 60 for hours or less than 60 for minutes."
+    interval = interval as Integer
+
+    if (interval <= 0) {
+        log.error "Invalid updateDataInterval: ${interval}. Must be > 0."
         return null
     }
+
+    // Quartz: "0 0/60 * * * ?" is invalid. Use hourly instead.
+    if (interval == 60) {
+        return "0 0 * * * ?"
+    }
+
+    if (interval < 60) {
+        return "0 0/${interval} * * * ?"
+    }
+
+    // interval > 60: must be divisible by 60 to translate to hours
+    if (interval % 60 == 0) {
+        def hours = (int)(interval / 60)
+        return "0 0 0/${hours} * * ?"
+    }
+
+    log.error "Invalid updateDataInterval: ${interval}. Must be < 60 or divisible by 60."
+    return null
 }
+
 
 def generateCronForDaysOrHours(interval) {
     if (interval < 24) {
@@ -682,6 +702,7 @@ def getDevices() {
                 def device = getChildDevice("IecMeter")
                 log.info "Device Number fetched successfully"//: $deviceNumber"
                 log.info "Device Code fetched successfully"//: $deviceCode"
+                log.debug "Devices raw response: ${response.data}" //added to capture data for dual meter
                 device.sendEvent(name: "deviceNumber", value: state.deviceNumber)
                 device.sendEvent(name: "deviceCode", value: state.deviceCode)
             } else {
@@ -757,6 +778,14 @@ def getElectricBill() {
                 def firstInvoice = responseData.data.invoices[0]
                 def lastInvoiceFromDate = firstInvoice.fromDate
                 def lastInvoiceToDate = firstInvoice.toDate
+                
+                def toDateStr = firstInvoice.toDate?.toString()?.substring(0, 10)   // "YYYY-MM-DD"
+				if (toDateStr) {
+    				def dt = Date.parse("yyyy-MM-dd", toDateStr)
+    				state.lastInvoiceDateForConsumption = (dt + 1).format("yyyy-MM-dd")  // +1 day
+    				logDebug "lastInvoiceDateForConsumption=${state.lastInvoiceDateForConsumption}"
+				}
+
                 def lastInvoiceAmountOrigin = firstInvoice.amountOrigin
                 def lastInvoiceAmountToPay = firstInvoice.amountToPay
                 def lastInvoiceAmountPaid = firstInvoice.amountPaid
@@ -791,47 +820,88 @@ def getElectricBill() {
 }
 
 def postRemoteReadingRange(String fromDate, int resolution, Closure completionHandler) {
+    def contractId   = state.contractId
     def deviceNumber = state.deviceNumber
-    def deviceCode = state.deviceCode
-    def contractId = state.contractId  // Ensure that contractId has been fetched before calling this function
-    if (!contractId) {
-        log.warn "Contract ID is not available. Skipping Remote Reading Range fetch."
+    def deviceCode   = state.deviceCode
+
+    if (!contractId || !deviceNumber || !deviceCode) {
+        log.warn "Missing contract/device data. Skipping RemoteReadingRange."
         completionHandler(null)
         return
     }
+
     def url = "https://iecapi.iec.co.il/api/Consumption/RemoteReadingRange/${contractId}"
-    def todayDate = new Date().format("yyyy-MM-dd")  // Today's date in the required format
+
+    /*
+     * Website sends lastInvoiceDate, but we should NOT hard-depend on getElectricBill().
+     * Fallback strategy:
+     * 1) Use state.lastInvoiceDateForConsumption if present
+     * 2) Else use today's date (works in practice and avoids blocking)
+     */
+    def lastInvoiceDate = state.lastInvoiceDateForConsumption
+    if (!lastInvoiceDate) {
+        lastInvoiceDate = new Date().format("yyyy-MM-dd")
+        log.warn "Missing state.lastInvoiceDateForConsumption. Falling back to lastInvoiceDate=${lastInvoiceDate}"
+    }
 
     def headers = getHeaders()
-    headers["Content-Type"] = "application/json"  // Add Content-Type header
+    headers["Content-Type"] = "application/json"
 
-    def body = JsonOutput.toJson([
-        "meterSerialNumber": deviceNumber,
-        "meterCode": deviceCode,
-        "contractNumber": contractId,           // <-- ADDED THIS LINE
-        "lastInvoiceDate": todayDate,
-        "fromDate": fromDate,
-        "resolution": resolution
-    ])
-    logDebug "Preparing to send Post Remote Reading Range to URL: $url with headers: $headers AND with body: $body"
-    try {
-        httpPost([uri: url, headers: headers, body: body]) { response ->
-            logDebug "Received response with status: ${response.status}"
-            if (response.status == 200) {
-                def responseData = response.data
-                logDebug "Response data: ${responseData}"
-                completionHandler(responseData)
+    // IMPORTANT: match website payload structure
+    def bodyObj = [
+        contractNumber : contractId,
+        lastInvoiceDate: lastInvoiceDate,
+        fromDate       : fromDate,
+        resolution     : resolution,
+        smartMetersList: [[
+            // Website example: meterKind "Backstream" (string) + meterCode + meterSerial
+            meterKind  : "Backstream",
+            meterCode  : deviceCode,
+            meterSerial: deviceNumber
+        ]]
+    ]
+    def body = JsonOutput.toJson(bodyObj)
+
+    logDebug "POST RemoteReadingRange url=${url} fromDate=${fromDate} res=${resolution} lastInvoiceDate=${lastInvoiceDate}"
+
+    // helper to avoid duplicating handler
+    def doPost = { int reqTimeout ->
+        httpPost([uri: url, headers: headers, body: body, timeout: reqTimeout]) { resp ->
+            if (resp?.status == 200) {
+                completionHandler(resp.data)
             } else {
-                log.error "Failed to fetch Remote Reading Range: HTTP error ${response.status}"
+                log.error "RemoteReadingRange failed HTTP ${resp?.status} data=${resp?.data}"
                 completionHandler(null)
             }
         }
+    }
+
+    try {
+        doPost(30)
+        return
     } catch (Exception e) {
-        log.error "Error during postRemoteReadingRange : ${e.message}"
-        if (e.response) {
-            logDebug "Response: ${e.response.data}"
+        def msg = (e?.message ?: "").toLowerCase()
+        def isTimeout = (e instanceof java.net.SocketTimeoutException) || msg.contains("timed out") || msg.contains("read timed out")
+
+        if (isTimeout) {
+            log.warn "RemoteReadingRange timeout - retrying once..."
+            try {
+                doPost(45)
+                return
+            } catch (Exception e2) {
+                log.error "Retry failed: ${e2.class?.name}: ${e2.message}"
+                completionHandler(null)
+                return
+            }
+        }
+
+        // Non-timeout error
+        log.error "Error during postRemoteReadingRange: ${e.class?.name}: ${e.message}"
+        if (e.respondsTo('getResponse') && e.response) {
+            logDebug "Response: ${e.response?.data}"
         }
         completionHandler(null)
+        return
     }
 }
 
@@ -859,139 +929,206 @@ def getHeaders() {
     ]
 }
 
-def updateTwoDaysAgoConsumption() {
-    def twoDaysAgoDate = (new Date() -2).format("yyyy-MM-dd")
-    logDebug "Updating two days ago's consumption for date: ${twoDaysAgoDate}"
-    
-    postRemoteReadingRange(twoDaysAgoDate, 1) { responseData ->
-        logDebug "Received response for twoDaysAgo's consumption: ${responseData}"
-        
-        if (responseData) {
-            if (settings.enableInfluxDB) {
-                def formattedData = formatDataForInfluxDB(responseData.data)
-                postDataToInfluxDB(formattedData)
-            }
-            def twoDaysAgoConsumption = responseData.totalConsumptionForPeriod ?: 0 //set to zero when NULL
-            def device = getChildDevice("IecMeter")
-            if (device) {
-                device.sendEvent(name: "twoDaysAgoConsumption", value: twoDaysAgoConsumption, unit: "kW")
-                log.info "twoDaysAgo consumption updated successfully: ${twoDaysAgoConsumption} kW"
-            } else {
-                log.warn "Device not found. Unable to update twoDaysAgo consumption."
-            }
-        } else {
-            log.error "Failed to update twoDaysAgo's consumption. No response data."
+// Extract import/export totals from either response format:
+// A) responseData.totalConsumptionForPeriod
+// B) responseData.meterList[0].totalConsumptionForPeriod
+private Map extractImportExportTotals(def responseData) {
+    if (!responseData) return [importKwh: 0G, exportKwh: 0G]
+
+    def src = responseData
+    if (responseData?.meterList && responseData.meterList.size() > 0) {
+        src = responseData.meterList[0]
+    }
+
+    BigDecimal importKwh = ((src?.totalConsumptionForPeriod ?: 0) as BigDecimal)
+    BigDecimal exportKwh = ((src?.totalBackStreamForPeriod ?: 0) as BigDecimal)  // IEC API field
+
+    return [importKwh: importKwh, exportKwh: exportKwh]
+}
+
+// Use this helper in the APP (not driver)
+private Map extractMeterTotals(def responseData) {
+    if (!responseData) return null
+    def m = responseData?.meterList ? responseData.meterList[0] : null
+    if (!m) return null
+
+    return [
+        importKwh : (m.totalConsumptionForPeriod ?: 0),
+        exportKwh : (m.totalBackStreamForPeriod ?: 0),
+        meter     : m
+    ]
+}
+
+def updateTwoDaysAgoData() {
+    def d = (new Date() - 2).format("yyyy-MM-dd")
+    logDebug "Updating two days ago import/export for date: ${d}"
+
+    postRemoteReadingRange(d, 1) { responseData ->
+        logDebug "Received response for twoDaysAgo: ${responseData}"
+
+        def totals = extractMeterTotals(responseData)
+        if (!totals) {
+            log.error "Failed to update twoDaysAgo. No response data."
+            return
+        }
+
+        def device = getChildDevice("IecMeter")
+        if (!device) {
+            log.warn "Device not found. Unable to update twoDaysAgo."
+            return
+        }
+
+        device.sendEvent(name: "twoDaysAgoConsumption", value: totals.importKwh, unit: "kWh")
+        device.sendEvent(name: "twoDaysAgoExport",      value: totals.exportKwh, unit: "kWh")
+        log.info "twoDaysAgo updated: import=${totals.importKwh} kWh, export=${totals.exportKwh} kWh"
+
+        if (settings.enableInfluxDB && totals.meter?.periodConsumptions) {
+            def list = responseData?.meterList?.getAt(0)?.periodConsumptions
+			def formattedData = formatDataForInfluxDB(list)
+			postDataToInfluxDB(formattedData)
         }
     }
 }
 
 
-def updateYesterdayConsumption() {
-    def yesterdayDate = (new Date() -1).format("yyyy-MM-dd")
-    logDebug "Updating yesterday's consumption for date: ${yesterdayDate}"
-    
-    postRemoteReadingRange(yesterdayDate, 1) { responseData ->
-        logDebug "Received response for yesterday's consumption: ${responseData}"
-        
-        if (responseData) {
-            if (settings.enableInfluxDB) {
-                def formattedData = formatDataForInfluxDB(responseData.data)
-                postDataToInfluxDB(formattedData)
-            }
-            def yesterdayConsumption = responseData.totalConsumptionForPeriod ?: 0 //set to zero when NULL
-            def device = getChildDevice("IecMeter")
-            if (device) {
-                device.sendEvent(name: "yesterdayConsumption", value: yesterdayConsumption, unit: "kW")
-                log.info "Yesterday consumption updated successfully: ${yesterdayConsumption} kW"
-            } else {
-                log.warn "Device not found. Unable to update yesterday consumption."
-            }
-        } else {
-            log.error "Failed to update yesterday's consumption. No response data."
+
+
+def updateYesterdayData() {
+    def d = (new Date() - 1).format("yyyy-MM-dd")
+    logDebug "Updating yesterday import/export for date: ${d}"
+
+    postRemoteReadingRange(d, 1) { responseData ->
+        logDebug "Received response for yesterday: ${responseData}"
+
+        def totals = extractMeterTotals(responseData)
+        if (!totals) {
+            log.error "Failed to update yesterday. No response data."
+            return
+        }
+
+        def device = getChildDevice("IecMeter")
+        if (!device) {
+            log.warn "Device not found. Unable to update yesterday."
+            return
+        }
+
+        device.sendEvent(name: "yesterdayConsumption", value: totals.importKwh, unit: "kWh")
+        device.sendEvent(name: "yesterdayExport",      value: totals.exportKwh, unit: "kWh")
+        log.info "yesterday updated: import=${totals.importKwh} kWh, export=${totals.exportKwh} kWh"
+
+        if (settings.enableInfluxDB && totals.meter?.periodConsumptions) {
+            def list = responseData?.meterList?.getAt(0)?.periodConsumptions
+			def formattedData = formatDataForInfluxDB(list)
+			postDataToInfluxDB(formattedData)
+
         }
     }
 }
 
 
-def updateTodayConsumption() {
-    def todayDate = new Date().format("yyyy-MM-dd")
-    logDebug "Updating today's consumption for date: ${todayDate}"
-    
-    postRemoteReadingRange(todayDate, 1) { responseData ->
-        logDebug "Received response for today's consumption: ${responseData}"
-        
-        if (responseData) {
-            if (settings.enableInfluxDB) {
-                def formattedData = formatDataForInfluxDB(responseData.data)
-                postDataToInfluxDB(formattedData)
-            }
-            // def todayConsumption = responseData.totalConsumptionForPeriod
-            def todayConsumption = responseData.totalConsumptionForPeriod ?: 0 //set to zero when NULL
-            def device = getChildDevice("IecMeter")
-            if (device) {
-                device.sendEvent(name: "todayConsumption", value: todayConsumption, unit: "kW")
-                log.info "Today consumption updated successfully: ${todayConsumption} kW"
-            } else {
-                log.warn "Device not found. Unable to update today consumption."
-            }
-        } else {
-            log.error "Failed to update today's consumption. No response data."
+def updateTodayData() {
+    def d = new Date().format("yyyy-MM-dd")
+    logDebug "Updating today import/export for date: ${d}"
+
+    postRemoteReadingRange(d, 1) { responseData ->
+        logDebug "Received response for today: ${responseData}"
+
+        def totals = extractMeterTotals(responseData)
+        if (!totals) {
+            log.error "Failed to update today. No response data."
+            return
+        }
+
+        def device = getChildDevice("IecMeter")
+        if (!device) {
+            log.warn "Device not found. Unable to update today."
+            return
+        }
+
+        device.sendEvent(name: "todayConsumption", value: totals.importKwh, unit: "kWh")
+        device.sendEvent(name: "todayExport",      value: totals.exportKwh, unit: "kWh")
+        log.info "today updated: import=${totals.importKwh} kWh, export=${totals.exportKwh} kWh"
+
+        if (settings.enableInfluxDB && totals.meter?.periodConsumptions) {
+            def list = responseData?.meterList?.getAt(0)?.periodConsumptions
+			def formattedData = formatDataForInfluxDB(list)
+			postDataToInfluxDB(formattedData)
         }
     }
 }
 
-def updateConsumptionForDate(String date) {
-    logDebug "Updating consumption for specific date: ${date}"
+
+
+def updateDataForDate(String date) {
+    logDebug "Updating import/export for specific date: ${date}"
 
     postRemoteReadingRange(date, 1) { responseData ->
-        logDebug "Received response for specific date's consumption: ${responseData}"
+        logDebug "Received response for specific date: ${responseData}"
 
-        if (responseData) {
-            if (settings.enableInfluxDB) {
-                def formattedData = formatDataForInfluxDB(responseData.data)
-                postDataToInfluxDB(formattedData)
-            }
-            def consumption = responseData.totalConsumptionForPeriod ?: 0 // Set to zero when NULL
-            def device = getChildDevice("IecMeter")
-            if (device) {
-                device.sendEvent(name: "customDateConsumption", value: "${date}: ${consumption} kW", unit: "kW")
-                log.info "Consumption for date ${date} updated successfully: ${consumption} kW"
-            } else {
-                log.warn "Device not found. Unable to update consumption for date: ${date}"
-            }
-        } else {
-            log.error "Failed to update consumption for date: ${date}. No response data."
+        def totals = extractMeterTotals(responseData)
+        if (!totals) {
+            log.error "Failed to update for date ${date}. No response data."
+            return
+        }
+
+        def device = getChildDevice("IecMeter")
+        if (!device) {
+            log.warn "Device not found. Unable to update for date: ${date}"
+            return
+        }
+
+        def importVal = totals.importKwh
+        def exportVal = totals.exportKwh
+
+        device.sendEvent(name: "customDateConsumption", value: "${date}: ${importVal} kWh", unit: "kWh")
+        device.sendEvent(name: "customDateExport",      value: "${date}: ${exportVal} kWh", unit: "kWh")
+        log.info "custom date ${date} updated: import=${importVal} kWh, export=${exportVal} kWh"
+
+        if (settings.enableInfluxDB && totals.meter?.periodConsumptions) {
+            def list = responseData?.meterList?.getAt(0)?.periodConsumptions
+			def formattedData = formatDataForInfluxDB(list)
+			postDataToInfluxDB(formattedData)
         }
     }
 }
 
 
 
-def updateThisMonthConsumption() {
-    def todayDate = new Date().format("yyyy-MM-dd")
-    logDebug "Updating this month's consumption for date: ${todayDate}"
-    
-    postRemoteReadingRange(todayDate, 3) { responseData ->   //resolution =3 will retrieve a daily consumption from the 1st of the month till TODAY
-        logDebug "Received response for this month's consumption: ${responseData}"
-        
-        if (responseData) {
-            //if (settings.enableInfluxDB) {
-            //    def formattedData = formatDataForInfluxDB(responseData.data)
-            //    postDataToInfluxDB(formattedData)
-            //}
-            def thisMonthConsumption = responseData.totalConsumptionForPeriod ?: 0 //set to zero when NULL
-            def device = getChildDevice("IecMeter")
-            if (device) {
-                device.sendEvent(name: "thisMonthConsumption", value: thisMonthConsumption, unit: "kW")
-                log.info "This month's consumption updated successfully: ${thisMonthConsumption} kW"
-            } else {
-                log.warn "Device not found. Unable to update this month's consumption."
-            }
-        } else {
-            log.error "Failed to update this month's consumption. No response data."
+
+def updateThisMonthData() {
+    def d = new Date().format("yyyy-MM-dd")
+    logDebug "Updating this month import/export for date: ${d}"
+
+    postRemoteReadingRange(d, 3) { responseData ->
+        logDebug "Received response for this month: ${responseData}"
+
+        def totals = extractMeterTotals(responseData)
+        if (!totals) {
+            log.error "Failed to update this month. No response data."
+            return
         }
+
+        def device = getChildDevice("IecMeter")
+        if (!device) {
+            log.warn "Device not found. Unable to update this month."
+            return
+        }
+
+        device.sendEvent(name: "thisMonthConsumption", value: totals.importKwh, unit: "kWh")
+        device.sendEvent(name: "thisMonthExport",      value: totals.exportKwh, unit: "kWh")
+        log.info "thisMonth updated: import=${totals.importKwh} kWh, export=${totals.exportKwh} kWh"
+
+        // Optional: if you want monthly daily-series in Influx, enable this and format from periodConsumptions
+        // if (settings.enableInfluxDB && totals.meter?.periodConsumptions) {
+        //     def formattedData = formatDataForInfluxDB(totals.meter.periodConsumptions)
+        //     postDataToInfluxDB(formattedData)
+        // }
     }
 }
+
+
+
+
 
 // Utility function to update the attributes
 def updateAttributeIfChanged(device, attributeName, newValue, unit = null) {
@@ -1042,18 +1179,56 @@ def encodeBase64URL(byte[] data) {
 // THIS FUNCTION POST DATA TO INFLUXDB BUCKET DEFINED BY THE USER
 
 // Function to format data for InfluxDB
-def formatDataForInfluxDB(data) {
+def formatDataForInfluxDB(List data) {
+    if (!data) return ""
+
     return data.collect { entry ->
-        def timestamp = parseDateToNano(entry.date)
-        "IEC_Meter value=${entry.value} ${timestamp}"
-    }.join("\n")
+        def tsStr = entry?.interval ?: entry?.date
+        if (!tsStr) return null
+
+        def timestamp = parseDateToNano(tsStr)
+        if (!timestamp) return null
+
+        BigDecimal consumption = (entry?.consumption != null) ? (entry.consumption as BigDecimal)
+                           : (entry?.value != null)        ? (entry.value as BigDecimal)
+                           : 0.0G
+
+        BigDecimal exportKwh = (entry?.backStream != null) ? (entry.backStream as BigDecimal) : 0.0G
+
+        // Keep existing field name "value" + add "export"
+        "IEC_Meter value=${consumption.toPlainString()},export=${exportKwh.toPlainString()} ${timestamp}"
+    }
+    .findAll { it }
+    .join("\n")
 }
 
+
+
 // Function to parse date to nanoseconds
-def parseDateToNano(dateString) {
-    def date = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSSSS", dateString)
-    return date.time * 1_000_000
+import java.time.OffsetDateTime
+import java.time.Instant
+import java.time.format.DateTimeFormatter
+
+def parseDateToNano(String dateString) {
+    if (!dateString) return null
+
+    try {
+        // New IEC format: 2026-02-02T22:00:00+00:00
+        Instant inst = OffsetDateTime.parse(dateString).toInstant()
+        return inst.toEpochMilli() * 1_000_000L
+    } catch (Exception ignore) {
+        // Fallback for older format: 2026-02-02T22:00:00.123456 (no TZ, microseconds)
+        try {
+            def d = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSSSS", dateString)
+            return d.time * 1_000_000L
+        } catch (Exception e2) {
+            log.warn "parseDateToNano: unsupported date format: ${dateString}"
+            return null
+        }
+    }
 }
+
+
 
 // Function to post data to InfluxDB with detailed logging
 private void postDataToInfluxDB(String data) {
@@ -1110,4 +1285,5 @@ private String getAuthorizationHeader() {
     }
     return null
 }
+
 
