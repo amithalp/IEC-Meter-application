@@ -1,95 +1,157 @@
 # IEC Meter Application
+
 This repository contains the IEC Meter Application and Driver, designed for authenticating and managing IEC meters using the Hubitat platform.
 
-# Features
-Authenticate with IEC Okta
-Manage IEC meter data
-Fetch consumption and billing details
-Schedule automatic updates for consumption and billing data
+## Features
 
-# Installation
-1. Add the App Code to Hubitat
-  Open your Hubitat web interface.
-  Navigate to Apps Code.
-  Click on + New App.
-  Copy the entire content of the IEC_Meter_Application.groovy file from this repository.
-  Paste the code into the Hubitat app code editor.
-  Click Save.
-2. Add the Driver Code to Hubitat
-  Navigate to Drivers Code.
-  Click on + New Driver.
-  Copy the entire content of the IEC_Meter_Driver.groovy file from this repository.
-  Paste the code into the Hubitat driver code editor.
-  Click Save.
+- Authenticate with IEC Okta
+- Manage IEC meter data
+- Fetch electricity **consumption (import)** and **export (backstream)**
+- Fetch billing details
+- Schedule automatic updates for consumption and billing data
+- Optional posting of consumption and export data to **InfluxDB v2**
+- Backward compatible with existing InfluxDB history (no data loss)
 
-# Configuration
-Important note - it is highly recomanded that you open a log session along side your other sessions and take a look at the logs during the setup peocess
+## Installation
 
-1. Install the App
-  Navigate to Apps.
-  Click on Add User App.
-  Select IEC Meter Application.
-2. Set Up the App
-  2.1   Enter User ID and Initiate Authentication. Note - User ID is the User you are using to log into the IEC web site
-        Click Initiate Authentication to receive an OTP code via SMS.
-  2.2   Enter OTP Code and Verify:
-        Input the received OTP code.
-        Click Verify OTP Code.
-  2.3   Authorize Session:
-        Click Authorize Session.
-2.4     Get Access Token:
-        Click Get Access Token.
-2.5     Create or Update Device:
-        Click Create or Update Device.
-        Note - AT this stage a new device will be created with the IEC Meter device driver. In case a device alreay exist it will only be updated.
-2.6     Get BP Number:
-          Click Get BP Number.
-2.7     Get Contracts:
-          Click Get Contracts.
-2.8     Get Devices:
-          Click Get Devices.
-2.9     Set Logging and Scheduling
-          Enable Debug Logging (optional):
-          Toggle the Enable Debug Logging option to enable or disable debug logs.
-          Update Consumption Interval: 
-            Set the interval (in minutes) for updating consumption data (Today's, Yesterday's and This Month's) . Default is 60 minutes.
-          Update Bill Interval:
-            Set the interval (in hours) for updating bill data. Default is 24 hours.
-2.10    Set InfluxDB logging
-        This is relevant only for users with an InfluxDB account who wish to post consumption data into InfluxDB 
-        Current version was tested and works with a local instance of InfluxDB V2 running on a RPI with Token authentication
-        InfluxDB connection set up:
-          InfluxDB Host: InfluxDB URI. ex - 192.168.1.50
-          InfluxDB Port: Usually 8086
-          InfluxDB Org: the value you set in InfluxDB
-          InfluxDB Bucket: the value you set in InfluxDB
-          InfluxDB Token: Produced by InfluxDB
-2.11    Save the Configuration
-          Click Done to save the configuration and initialize the app.
+### 1. Add the App Code to Hubitat
 
-# Checks: 
-Go to your new app and click the gear icon at the top. Scroll down to the scheduling section and you should see the scheduling for:
-  getElectricBill
-  refreshToken	
-  updateThisMonthConsumption
-  updateTodayConsumption
-  updateYesterdayConsumption
-  updateTwoDaysAgoConsumption
+1. Open your Hubitat web interface
+2. Navigate to **Apps Code**
+3. Click **+ New App**
+4. Copy the entire content of `IEC_Meter_Application.groovy`
+5. Paste the code into the Hubitat app editor
+6. Click **Save**
 
-# Usage
-The app will automatically schedule and update the following:
-  Two days ago Consumption: Calculated and updated every updateConsumptionInterval minutes.
-  Yesterday's Consumption: Calculated and updated every updateConsumptionInterval minutes.
-  Today's Consumption: Calculated and updated every updateConsumptionInterval minutes.
-  This month's Consumption : Calculated and updated every updateConsumptionInterval minutes
-  Electric Bill: Updated every updateBillInterval hours.
-  Refresh Token: Automatically refreshed every 45 minutes.
+### 2. Add the Driver Code to Hubitat
 
-  You can chesk all scheduling by going to your new app and click the gear icon at the top. Scroll down to the scheduling section and you should see the scheduling
+1. Navigate to **Drivers Code**
+2. Click **+ New Driver**
+3. Copy the entire content of `IEC_Meter_Driver.groovy`
+4. Paste the code into the Hubitat driver editor
+5. Click **Save**
 
-# License
-Licensed under the Apache License, Version 2.0. See LICENSE for more information.
+## Configuration
 
-# Support
-For any issues or questions, please open an issue in the GitHub repository.
+> **Important**  
+> It is highly recommended to keep a **Logs** window open during the setup process.
 
+### 1. Install the App
+
+1. Navigate to **Apps**
+2. Click **Add User App**
+3. Select **IEC Meter Application**
+
+### 2. Set Up the App
+
+#### 2.1 Initiate Authentication
+
+- Enter **User ID** (same user used on the IEC website)
+- Click **Initiate Authentication**
+- An OTP code will be sent via SMS
+
+#### 2.2 Verify OTP
+
+- Enter the OTP code
+- Click **Verify OTP Code**
+
+#### 2.3 Authorize Session
+
+- Click **Authorize Session**
+
+#### 2.4 Get Access Token
+
+- Click **Get Access Token**
+
+#### 2.5 Create or Update Device
+
+- Click **Create or Update Device**
+- A device using the **IEC Meter Driver** will be created or updated
+
+#### 2.6 Get BP Number
+
+- Click **Get BP Number**
+
+#### 2.7 Get Contracts
+
+- Click **Get Contracts**
+
+#### 2.8 Get Devices
+
+- Click **Get Devices**
+
+#### 2.9 Logging and Scheduling
+
+- **Enable Debug Logging** (optional)
+
+**Update Consumption Interval (minutes)**  
+Controls updates for:
+- Today
+- Yesterday
+- Two Days Ago
+- This Month  
+(Default: 60 minutes)
+
+**Update Bill Interval (hours)**  
+Controls electric bill refresh  
+(Default: 24 hours)
+
+#### 2.10 InfluxDB Logging (Optional)
+
+- Posts both **consumption** and **export**
+- Uses a single measurement: `IEC_Meter`
+- Keeps existing `value` field for consumption
+- Adds `export` field for backstream
+- Does **not** modify historical data
+
+**InfluxDB Settings**
+
+- InfluxDB Host
+- InfluxDB Port (usually 8086)
+- InfluxDB Org
+- InfluxDB Bucket
+- InfluxDB Token
+
+#### 2.11 Save Configuration
+
+- Click **Done**
+
+## Checks
+
+After installation:
+
+1. Open the IEC Meter Application
+2. Click the **gear icon**
+3. Verify scheduled jobs:
+   - `updateTwoDaysAgoConsumption`
+   - `updateYesterdayConsumption`
+   - `updateTodayConsumption`
+   - `updateThisMonthConsumption`
+   - `getElectricBill`
+   - `refreshToken`
+
+## Usage
+
+The app automatically updates:
+
+- Two Days Ago Consumption & Export
+- Yesterday Consumption & Export
+- Today Consumption & Export
+- This Month Consumption & Export
+- Electric Bill Data
+- OAuth Token Refresh (every 45 minutes)
+
+All values are available for:
+- Dashboards
+- Rule Machine
+- InfluxDB
+- Grafana
+
+## License
+
+Licensed under the Apache License, Version 2.0.  
+See the LICENSE file for details.
+
+## Support
+
+For issues or questions, please open an issue in the GitHub repository.
